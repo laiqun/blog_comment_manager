@@ -33,11 +33,11 @@ globalThis.chrome = {
   tabs: { onRemoved: capture('onRemoved'), onUpdated: capture('onUpdated') },
 };
 
-let idbPutAll, getState;
+let idbPutAll, getState, resetStatsRefreshDebounce;
 const sendMsg = (msg) => new Promise((resolve) => listeners.onMessage(msg, {}, resolve));
 
 before(async () => {
-  await import('../extension/background/service-worker.js');
+  ({ resetStatsRefreshDebounce } = await import('../extension/background/service-worker.js'));
   ({ idbPutAll } = await import('../extension/lib/idb.js'));
   ({ getState } = await import('../extension/lib/storage.js'));
 
@@ -82,6 +82,7 @@ test('getSnapshot：运行中不刷新，保持运行态计数', async () => {
 });
 
 test('getSnapshot：targetDomain 丢失时从 IndexedDB 恢复最近收集的域名', async () => {
+  resetStatsRefreshDebounce();
   const cs = getState().collectState;
   cs.targetDomain = '';
   const res = await sendMsg({ type: 'getSnapshot' });
@@ -91,4 +92,15 @@ test('getSnapshot：targetDomain 丢失时从 IndexedDB 恢复最近收集的域
   assert.equal(res.snapshot.collect.queued, 2);
   assert.equal(res.snapshot.collect.matched, 2);
   assert.equal(cs.targetDomain, 'example.com'); // 已写回状态
+});
+
+test('getSnapshot：短时间内重复触发去抖，只刷新一次', async () => {
+  resetStatsRefreshDebounce();
+  const cs = getState().collectState;
+  const first = await sendMsg({ type: 'getSnapshot' });
+  assert.equal(first.snapshot.collect.discovered, 5); // 第一次正常刷新
+  cs.discovered = 77; // 若再次刷新会被覆盖回 5
+  const second = await sendMsg({ type: 'getSnapshot' });
+  assert.equal(second.snapshot.collect.discovered, 77); // 第二次被去抖跳过，保持原值
+  resetStatsRefreshDebounce();
 });

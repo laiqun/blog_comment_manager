@@ -95,7 +95,14 @@ function isIdle() {
  * 队列中 = backlinks 里未分析过的；博客评论资源 = analysis 中命中结论（ready/captcha）条数。
  */
 const VALID_STATUSES = ['ready', 'captcha'];
+// Chrome 在插件重载后会两次创建 side panel 文档（恢复 + 附着），每次都会发 getSnapshot；
+// 短时间内的重复触发去抖，只跑一次
+const STATS_REFRESH_DEBOUNCE_MS = 3000;
+let lastStatsRefreshAt = 0;
+export function resetStatsRefreshDebounce() { lastStatsRefreshAt = 0; } // 测试用
 async function refreshCollectStatsFromIdb() {
+  if (Date.now() - lastStatsRefreshAt < STATS_REFRESH_DEBOUNCE_MS) return;
+  lastStatsRefreshAt = Date.now();
   const st = getState();
   const c = st.collectState;
   if (c.status !== 'idle') {
