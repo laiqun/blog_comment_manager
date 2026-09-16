@@ -10,6 +10,7 @@
 | `openrouter.test.mjs` | 无 Key 报错、JSON 解析容错（脏输出提取）、classifyPage 结果归一化、模型角色映射、Key 校验（fetch 桩） |
 | `i18n.test.mjs` | 中英字典 key 对齐、参数插值、语言切换 |
 | `config.test.mjs` | 默认模型/数据源结构、「待联调项留空」契约 |
+| `service-worker.test.mjs` | getSnapshot 时按 IndexedDB 口径刷新收集统计（已发现/已分析/队列中/命中），运行中不刷新（内存版 chrome.* + IndexedDB 桩） |
 
 ## 运行
 

@@ -6,7 +6,7 @@ import {
   removeResource, findTask, taskCounts, uid,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
-import { idbGetDomain } from '../lib/idb.js';
+import { idbGetDomain, idbGetAll } from '../lib/idb.js';
 import { CollectController } from './collect.js';
 import { PublishRunner } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
@@ -97,14 +97,33 @@ function isIdle() {
 const VALID_STATUSES = ['ready', 'captcha'];
 async function refreshCollectStatsFromIdb() {
   const st = getState();
-  if (st.collectState.status !== 'idle' || !st.collectState.targetDomain) return;
+  const c = st.collectState;
+  if (c.status !== 'idle') {
+    addLog('collect', `统计刷新跳过：status=${c.status}`, 'warn');
+    await save('logs');
+    return;
+  }
   try {
+    // targetDomain 丢失时（如旧版 save 覆盖写 bug 抹掉持久化状态）从 IndexedDB 恢复最近收集的域名
+    if (!c.targetDomain) {
+      const all = await idbGetAll('backlinks');
+      if (all.length) {
+        all.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+        c.targetDomain = all[0].targetDomain;
+        addLog('collect', `目标域名丢失，已从收集数据恢复：${c.targetDomain}`, 'warn');
+        await save('collectState');
+      }
+    }
+    if (!c.targetDomain) {
+      addLog('collect', '统计刷新跳过：无目标域名且收集数据为空', 'warn');
+      await save('logs');
+      return;
+    }
     const [links, analysis] = await Promise.all([
-      idbGetDomain('backlinks', st.collectState.targetDomain),
-      idbGetDomain('analysis', st.collectState.targetDomain),
+      idbGetDomain('backlinks', c.targetDomain),
+      idbGetDomain('analysis', c.targetDomain),
     ]);
     const analyzedUrls = new Set(analysis.map((r) => r.url));
-    const c = st.collectState;
     const next = {
       discovered: links.length,
       analyzed: analysis.length,
@@ -112,13 +131,19 @@ async function refreshCollectStatsFromIdb() {
       matched: analysis.filter((r) => VALID_STATUSES.includes(r.status)).length,
       seen: links.map((r) => r.url),
     };
+    addLog('collect', `统计刷新（${c.targetDomain}）：已发现=${next.discovered} / 已分析=${next.analyzed} / 队列中=${next.queued} / 博客评论资源=${next.matched}`, 'info');
     if (c.discovered !== next.discovered || c.analyzed !== next.analyzed
       || c.queued !== next.queued || c.matched !== next.matched) {
       Object.assign(c, next);
-      await save('collectState');
+      await save('collectState', 'logs');
       broadcast();
+    } else {
+      await save('logs');
     }
-  } catch { /* IDB 不可用时跳过 */ }
+  } catch (e) {
+    addLog('collect', `统计刷新失败：${e.message}`, 'error');
+    await save('logs');
+  }
 }
 
 // ---------------- 消息处理 ----------------
