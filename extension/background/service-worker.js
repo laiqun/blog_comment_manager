@@ -89,16 +89,32 @@ function isIdle() {
   return st.collectState.status === 'idle' && !st.publishRuntime;
 }
 
-/** 空闲时把「已发现外链」刷新为 IndexedDB 里该域名的存量（跨轮次累积口径） */
-async function refreshDiscoveredFromIdb() {
+/**
+ * 空闲时把收集统计刷新为 IndexedDB 存量口径（跨轮次累积）：
+ * 已发现 = backlinks 表条数；已分析 = analysis 表条数；
+ * 队列中 = backlinks 里未分析过的；博客评论资源 = analysis 中命中结论（ready/captcha）条数。
+ */
+const VALID_STATUSES = ['ready', 'captcha'];
+async function refreshCollectStatsFromIdb() {
   const st = getState();
   if (st.collectState.status !== 'idle' || !st.collectState.targetDomain) return;
   try {
-    const rows = await idbGetDomain('backlinks', st.collectState.targetDomain);
-    const n = rows.length;
-    if (n !== st.collectState.discovered) {
-      st.collectState.discovered = n;
-      st.collectState.seen = rows.map((r) => r.url);
+    const [links, analysis] = await Promise.all([
+      idbGetDomain('backlinks', st.collectState.targetDomain),
+      idbGetDomain('analysis', st.collectState.targetDomain),
+    ]);
+    const analyzedUrls = new Set(analysis.map((r) => r.url));
+    const c = st.collectState;
+    const next = {
+      discovered: links.length,
+      analyzed: analysis.length,
+      queued: links.filter((r) => !analyzedUrls.has(r.url)).length,
+      matched: analysis.filter((r) => VALID_STATUSES.includes(r.status)).length,
+      seen: links.map((r) => r.url),
+    };
+    if (c.discovered !== next.discovered || c.analyzed !== next.analyzed
+      || c.queued !== next.queued || c.matched !== next.matched) {
+      Object.assign(c, next);
       await save('collectState');
       broadcast();
     }
@@ -114,7 +130,7 @@ async function handleMessage(msg, sender) {
   switch (msg.type) {
     // ---- Popup 拉取与控制 ----
     case 'getSnapshot':
-      await refreshDiscoveredFromIdb();
+      await refreshCollectStatsFromIdb();
       return { ok: true, snapshot: snapshot() };
 
     case 'startCollect':
@@ -331,7 +347,7 @@ chrome.runtime.onInstalled.addListener(() => {
   (async () => {
     await load();
     ensureControllers();
-    await refreshDiscoveredFromIdb();
+    await refreshCollectStatsFromIdb();
     const st = getState();
     // 断点续跑：安装/更新时如果状态是 running，恢复队列处理
     if (st.collectState.status === 'running') collect.resume();
@@ -343,7 +359,7 @@ chrome.runtime.onStartup.addListener(() => {
   (async () => {
     await load();
     ensureControllers();
-    await refreshDiscoveredFromIdb();
+    await refreshCollectStatsFromIdb();
     const st = getState();
     if (st.collectState.status === 'running') collect.resume();
     if (st.publishRuntime) await publish.healthCheck();
