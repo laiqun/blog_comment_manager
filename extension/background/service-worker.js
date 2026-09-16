@@ -231,13 +231,6 @@ async function handleMessage(msg, sender) {
       return { ok: true, snapshot: snapshot() };
     }
 
-    case 'deleteResource': {
-      await removeResource(msg.id);
-      await save('resources');
-      broadcast();
-      return { ok: true, snapshot: snapshot() };
-    }
-
     // 资源库：直接读 IndexedDB analysis 表，筛选「命中，可发布」的记录（不经内存态）
     case 'getLibraryResources': {
       const rows = await idbGetAll('analysis').catch(() => []);
