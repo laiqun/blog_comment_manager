@@ -71,6 +71,15 @@ test('save 序列化到 chrome.storage 且可清空', async () => {
   assert.equal(uid().length > 10, true);
 });
 
+test('save 部分 key 合并写入，不抹掉其它字段', async () => {
+  getState().logs = [{ t: 1, src: 'collect', msg: 'keep-me' }];
+  await save('logs');
+  await save('resources'); // 第二次只存 resources，logs 必须还在
+  const stored = mem.get('bcm_store');
+  assert.ok(stored.logs && stored.logs.length === 1);
+  assert.ok(stored.resources.length >= 1);
+});
+
 test('domainOf 去掉 www', () => {
   assert.equal(domainOf('https://www.ab.com/x?y=1'), 'ab.com');
   assert.equal(domainOf('not a url'), '');

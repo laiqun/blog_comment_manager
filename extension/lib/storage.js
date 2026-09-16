@@ -81,7 +81,9 @@ export async function save(...keys) {
   for (const k of list) {
     payload[k] = state[k];
   }
-  await chrome.storage.local.set({ [STORAGE_KEY]: payload });
+  // 合并写入：chrome.storage 的 set 是整个 key 覆盖，直接写 payload 会把未保存的其它字段抹掉
+  const data = await chrome.storage.local.get(STORAGE_KEY);
+  await chrome.storage.local.set({ [STORAGE_KEY]: { ...(data[STORAGE_KEY] || {}), ...payload } });
 }
 
 export async function clearAll() {
