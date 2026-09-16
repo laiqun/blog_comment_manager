@@ -1,6 +1,7 @@
 /**
  * 持久化状态存储（chrome.storage.local 的内存镜像）。
  * MV3 service worker 随时可能被杀，所有状态变更后必须 save()。
+ * 大数据量表（backlinks / analysis / resources）只存 IndexedDB，不进 chrome.storage。
  */
 import { DEFAULT_SETTINGS, LIMITS } from './config.js';
 import { idbPutAll, idbPut, idbDelete, idbGetAll, idbClear } from './idb.js';
@@ -33,7 +34,6 @@ const state = {
   activeTaskId: null,
   publishRuntime: null,  // {taskId, resourceId, stage, tabId}
   logs: [],              // {t, src, msg, level, url}
-  backlinks: [],         // 收集数据集（JSON）：{url, domain, anchor, targetUrl, ascore, nofollow, sitewide, page, addedAt}
   loaded: false,
 };
 
@@ -54,12 +54,31 @@ export async function load() {
       activeTaskId: saved.activeTaskId ?? null,
       publishRuntime: saved.publishRuntime || null,
       logs: saved.logs || [],
-      backlinks: saved.backlinks || [],
     });
   }
   state.loaded = true;
+  await migrateBacklinksToIdb(saved);
   await restoreResourcesFromIdb();
   return state;
+}
+
+/** 旧版 backlinks 双写在 chrome.storage：一次性迁移到 IndexedDB（唯一持久层）后从 storage 移除 */
+async function migrateBacklinksToIdb(saved) {
+  const rows = saved && saved.backlinks;
+  if (!Array.isArray(rows) || !rows.length) return;
+  try {
+    // 更老的记录可能缺 targetDomain（IDB 主键之一），用当时的目标域名补齐
+    const domain = saved.collectState?.targetDomain || '';
+    const valid = rows
+      .filter((r) => r && r.url)
+      .map((r) => (r.targetDomain ? r : { ...r, targetDomain: domain }))
+      .filter((r) => r.targetDomain);
+    if (valid.length) await idbPutAll('backlinks', valid);
+    const data = await chrome.storage.local.get(STORAGE_KEY);
+    const cur = data[STORAGE_KEY] || {};
+    delete cur.backlinks;
+    await chrome.storage.local.set({ [STORAGE_KEY]: cur });
+  } catch { /* IDB 不可用时保留原样，下次启动再迁移 */ }
 }
 
 /** 资源库以 IndexedDB 为持久层：启动时恢复；旧数据（仅在 chrome.storage）自动迁移过去 */
@@ -75,7 +94,7 @@ async function restoreResourcesFromIdb() {
 }
 
 export async function save(...keys) {
-  const all = ['settings', 'resources', 'collectState', 'tasks', 'activeTaskId', 'publishRuntime', 'logs', 'backlinks'];
+  const all = ['settings', 'resources', 'collectState', 'tasks', 'activeTaskId', 'publishRuntime', 'logs'];
   const list = keys && keys.length ? keys : all;
   const payload = {};
   for (const k of list) {
@@ -95,7 +114,6 @@ export async function clearAll() {
   state.activeTaskId = null;
   state.publishRuntime = null;
   state.logs = [];
-  state.backlinks = [];
   for (const s of ['backlinks', 'analysis', 'resources']) idbClear(s).catch(() => {});
 }
 

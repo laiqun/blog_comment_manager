@@ -10,7 +10,9 @@
 | `openrouter.test.mjs` | 无 Key 报错、JSON 解析容错（脏输出提取）、classifyPage 结果归一化、模型角色映射、Key 校验（fetch 桩） |
 | `i18n.test.mjs` | 中英字典 key 对齐、参数插值、语言切换 |
 | `config.test.mjs` | 默认模型/数据源结构、「待联调项留空」契约 |
-| `service-worker.test.mjs` | getSnapshot 时按 IndexedDB 口径刷新收集统计（已发现/已分析/队列中/命中），运行中不刷新（内存版 chrome.* + IndexedDB 桩） |
+| `service-worker.test.mjs` | getSnapshot 时按 IndexedDB 口径刷新收集统计（已发现/已分析/队列中/命中），运行中不刷新，targetDomain 丢失时从 IDB 恢复（内存版 chrome.* + IndexedDB 桩） |
+| `migrate-backlinks.test.mjs` | 旧版 chrome.storage backlinks 一次性迁移到 IndexedDB（补齐缺失的 targetDomain、移除原字段）、save 不再写 backlinks |
+| `stubs.mjs` | 共享的内存版 IndexedDB 最小桩（put/getAll 范围/delete/clear，复合主键） |
 
 ## 运行
 

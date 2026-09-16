@@ -40,8 +40,9 @@ Semrush 走**面板模式**（已在 dash.3ue.co 联调通过）：先在 dash.3
 （`[data-test-type="platform"]`）的来源；每抓完一页随机等 3-9 秒 → 点击页面上的「下一页」按钮
 （`[data-test-pagination-next-btn]`）→ 等表格刷新后继续，直到最后一页自动结束。
 不构造、不重放任何接口请求。
-收集全程只用工具页这一个标签；结构化数据（URL/域名/源页面标题/分类标签）以 JSON 存于本地
-（`state.backlinks`），收集 Tab 的「导出收集数据 (CSV)」可导出。
+收集全程只用工具页这一个标签；结构化数据（URL/域名/源页面标题/分类标签）存于 IndexedDB
+（`bcm-idb` 的 `backlinks` 表，按目标域名归档，唯一持久层，不进 chrome.storage），
+收集 Tab 的「导出收集数据 (CSV)」可导出。
 
 | 配置 | 说明 |
 |------|------|

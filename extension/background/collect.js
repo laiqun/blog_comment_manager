@@ -39,7 +39,6 @@ export class CollectController {
       providerTabId: null, analyzeTabId: null,
       startedAt: Date.now(),
     });
-    getState().backlinks = []; // 每次收集重建内存缓存（持久数据在 IndexedDB）
     // 已发现外链为累积口径：从 IndexedDB 恢复该域名下的存量（seen 也据此去重，重复抓取不重复计数）
     try {
       const prev = await idbGetDomain('backlinks', cs.targetDomain);
@@ -48,7 +47,7 @@ export class CollectController {
     } catch { /* IndexedDB 不可用时从 0 开始 */ }
     this.providerDone = false;
     addLog('collect', `开始收集：${PROVIDERS[cs.provider].label} / ${domain}（从页面抓取，仅保留「博客」外链）`, 'info');
-    await this.notify(['collectState', 'backlinks', 'logs']);
+    await this.notify(['collectState', 'logs']);
 
     try {
       await this.ensureProviderTab();
@@ -162,7 +161,7 @@ export class CollectController {
         const rows = await this.scrapePageRows(tabId);
         const kept = this.onScrapedRows(rows, page);
         addLog('collect', `第 ${page} 页：抓到 ${rows.length} 行，保留「博客」外链 ${kept} 条（累计 ${cs.discovered}）`, 'info');
-        await this.notify(['collectState', 'backlinks', 'logs']);
+        await this.notify(['collectState', 'logs']);
 
         const next = await this.nextBtnState(tabId);
         if (!next.found) { addLog('collect', '页面上没有「下一页」按钮，抓取完成', 'info'); return; }
@@ -264,11 +263,10 @@ export class CollectController {
     return (res && res.result) || [];
   }
 
-  /** 入库：去重 + 目标站/数据源/静态资源排除 + 只保留「博客」标签行；写内存缓存 + IndexedDB */
+  /** 入库：去重 + 目标站/数据源/静态资源排除 + 只保留「博客」标签行；唯一持久层为 IndexedDB */
   onScrapedRows(rows, page) {
     const cs = this.cs;
     const prov = PROVIDERS[cs.provider];
-    const state = getState();
     const seen = new Set(cs.seen);
     const idbRows = [];
     let kept = 0;
@@ -302,7 +300,6 @@ export class CollectController {
         page,
         addedAt: Date.now(),
       };
-      state.backlinks.push(row);
       idbRows.push(row);
       kept++;
     }
@@ -373,9 +370,8 @@ export class CollectController {
   async startAnalysis() {
     const cs = this.cs;
     if (cs.status === 'running') throw new Error('收集/分析进行中');
-    // 数据以 IndexedDB 为准（按目标域名累积，跨收集轮次），内存缓存兜底
-    let rows = await idbGetDomain('backlinks', cs.targetDomain).catch(() => []);
-    if (!rows.length) rows = getState().backlinks;
+    // 数据只以 IndexedDB 为准（按目标域名累积，跨收集轮次）
+    const rows = await idbGetDomain('backlinks', cs.targetDomain).catch(() => []);
     if (!rows.length) throw new Error('收集数据集为空：请先「开始收集」抓取外链数据');
     // 去重：已分析过的 URL（无论结论）不再重复分析
     const analyzedUrls = new Set(

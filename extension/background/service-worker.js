@@ -321,12 +321,7 @@ async function handleMessage(msg, sender) {
     // 收集数据集导出（侧边栏下载 CSV）：以 IndexedDB 按目标域名读取，跨收集轮次累积
     case 'getBacklinksCsv': {
       const st = getState();
-      const domain = st.collectState.targetDomain;
-      let rows = st.backlinks;
-      try {
-        const idbRows = await idbGetDomain('backlinks', domain);
-        if (idbRows.length) rows = idbRows;
-      } catch { /* IDB 不可用时退回内存缓存 */ }
+      const rows = await idbGetDomain('backlinks', st.collectState.targetDomain).catch(() => []);
       if (!rows.length) return { ok: false, error: '还没有收集到外链数据' };
       return { ok: true, csv: backlinksCsv(rows), count: rows.length };
     }
