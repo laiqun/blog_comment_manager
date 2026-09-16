@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "博客评论外链管理器",
+    "description": "Extension name"
+  },
+  "extDesc": {
+    "message": "从 Semrush/Ahrefs 收集同行外链，AI 分析免登录可评论的博客资源，并半自动发布评论外链。",
+    "description": "Extension description"
+  }
+}

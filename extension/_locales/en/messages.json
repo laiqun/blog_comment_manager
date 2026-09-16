@@ -1,0 +1,10 @@
+{
+  "extName": {
+    "message": "Blog Comment Backlink Manager",
+    "description": "Extension name"
+  },
+  "extDesc": {
+    "message": "Collect competitor backlinks from Semrush/Ahrefs, use AI to find login-free commentable blogs, and publish comment backlinks semi-automatically.",
+    "description": "Extension description"
+  }
+}

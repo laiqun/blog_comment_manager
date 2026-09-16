@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>博客评论外链管理器 - 设置</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1 data-i18n="optionsTitle">博客评论外链管理器 - 设置</h1>
+
+    <!-- 卡片一：API Key -->
+    <section class="card">
+      <h2 data-i18n="apiCardTitle">OpenRouter API Key</h2>
+      <div class="row">
+        <input type="password" id="api-key" data-i18n-ph="apiKeyPh" placeholder="sk-or-v1-..." spellcheck="false" autocomplete="off" />
+        <button id="btn-test" class="btn btn-primary" data-i18n="testConn">测试连接</button>
+      </div>
+      <div class="hint" id="test-result"></div>
+    </section>
+
+    <!-- 卡片二：模型配置 -->
+    <section class="card">
+      <h2 data-i18n="modelsCardTitle">模型配置</h2>
+      <div class="form-row">
+        <label data-i18n="model_discover">链接发现模型</label>
+        <div class="desc" data-i18n="model_discover_desc"></div>
+        <input type="text" id="model-discover" spellcheck="false" />
+      </div>
+      <div class="form-row">
+        <label data-i18n="model_classify">链接分类模型</label>
+        <div class="desc" data-i18n="model_classify_desc"></div>
+        <input type="text" id="model-classify" spellcheck="false" />
+      </div>
+      <div class="form-row">
+        <label data-i18n="model_formDetect">表单识别模型</label>
+        <div class="desc" data-i18n="model_formDetect_desc"></div>
+        <input type="text" id="model-formdetect" spellcheck="false" />
+      </div>
+      <div class="form-row">
+        <label data-i18n="model_commentGen">评论生成模型</label>
+        <div class="desc" data-i18n="model_commentGen_desc"></div>
+        <input type="text" id="model-commentgen" spellcheck="false" />
+      </div>
+    </section>
+
+    <!-- 卡片三：发布身份 -->
+    <section class="card">
+      <h2 data-i18n="identityCardTitle">发布身份</h2>
+      <p class="desc" data-i18n="identityCardDesc"></p>
+      <div class="row three">
+        <div class="form-row">
+          <label data-i18n="idName">昵称</label>
+          <input type="text" id="id-name" />
+        </div>
+        <div class="form-row">
+          <label data-i18n="idEmail">邮箱</label>
+          <input type="email" id="id-email" />
+        </div>
+        <div class="form-row">
+          <label data-i18n="idWebsite">网址（默认落地链接）</label>
+          <input type="text" id="id-website" placeholder="https://..." spellcheck="false" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 卡片四：发布设置 + 语言 -->
+    <section class="card">
+      <h2 data-i18n="publishCardTitle">发布设置</h2>
+      <div class="row">
+        <div class="form-row grow">
+          <label data-i18n="publishModeLabel">默认发布模式</label>
+          <select id="publish-mode">
+            <option value="semi" data-i18n="modeSemi">半自动（填表后人工确认提交）</option>
+            <option value="auto" data-i18n="modeAuto">全自动（直接提交，不审核）</option>
+          </select>
+        </div>
+        <div class="form-row grow">
+          <label data-i18n="languageLabel">界面语言</label>
+          <select id="lang-select">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- 卡片五：Google Sheets 同步 -->
+    <section class="card">
+      <h2 data-i18n="sheetsCardTitle">Google Sheets 同步</h2>
+      <p class="desc" data-i18n="sheetsUrlDesc"></p>
+      <div class="row">
+        <input type="text" id="sheets-url" placeholder="https://script.google.com/macros/s/.../exec" spellcheck="false" />
+        <button id="btn-sync" class="btn btn-success" data-i18n="btnSync">同步资源库</button>
+      </div>
+      <div class="hint" id="sync-result"></div>
+    </section>
+
+    <div id="saved-flash" data-i18n="saved">已保存</div>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

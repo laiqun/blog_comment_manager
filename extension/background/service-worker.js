@@ -1,0 +1,375 @@
+/**
+ * MV3 Service Worker：消息路由 + 状态快照广播 + 保活与断点续跑。
+ */
+import {
+  load, getState, save, clearAll, addLog,
+  removeResource, findTask, taskCounts, uid,
+} from '../lib/storage.js';
+import { backlinksCsv } from '../lib/util.js';
+import { idbGetDomain } from '../lib/idb.js';
+import { CollectController } from './collect.js';
+import { PublishRunner } from './publish.js';
+import { testKey } from '../lib/openrouter.js';
+
+const ALARM_TICK = 'bcm-tick';
+const ports = new Set();
+
+// 点击工具栏图标直接打开侧边栏（无 popup）
+chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((e) => {
+  console.error('[BCM] sidePanel behavior error', e);
+});
+
+let collect, publish;
+
+function ensureControllers() {
+  const notify = async (...keys) => {
+    await save(...keys);
+    broadcast();
+  };
+  if (!collect) collect = new CollectController(notify);
+  if (!publish) publish = new PublishRunner(notify);
+}
+
+function snapshot() {
+  const st = getState();
+  return {
+    collect: {
+      status: st.collectState.status,
+      mode: st.collectState.mode || 'collect',
+      targetDomain: st.collectState.targetDomain,
+      provider: st.collectState.provider,
+      phase: st.collectState.phase,
+      discovered: st.collectState.discovered,
+      analyzed: st.collectState.analyzed,
+      matched: st.collectState.matched,
+      queued: st.collectState.queued,
+      seeds: st.collectState.seeds.length,
+    },
+    tasks: st.tasks.map((t) => ({
+      id: t.id, name: t.name, targetUrl: t.targetUrl,
+      siteIntro: t.siteIntro || '', mainKeyword: t.mainKeyword || '',
+      mode: t.mode,
+      status: t.status, resourceIds: t.resourceIds, results: t.results || {},
+      createdAt: t.createdAt, finishedAt: t.finishedAt,
+      counts: taskCounts(t),
+    })),
+    activeTaskId: st.activeTaskId,
+    publish: st.publishRuntime
+      ? { taskId: st.publishRuntime.taskId, resourceId: st.publishRuntime.resourceId, stage: st.publishRuntime.stage }
+      : null,
+    resources: st.resources,
+    logs: st.logs.slice(-200).reverse(),
+    settings: {
+      publishMode: st.settings.publishMode,
+      language: st.settings.language,
+      hasKey: !!st.settings.openrouterKey,
+      pageDelayMinMs: st.settings.pageDelayMinMs,
+      pageDelayMaxMs: st.settings.pageDelayMaxMs,
+    },
+  };
+}
+
+function broadcast() {
+  const msg = { type: 'stateChanged', snapshot: snapshot() };
+  for (const p of ports) {
+    try { p.postMessage(msg); } catch { /* closed */ }
+  }
+}
+
+function ensureAlarm(on) {
+  if (on) {
+    chrome.alarms.create(ALARM_TICK, { periodInMinutes: 0.5 });
+  } else {
+    chrome.alarms.clear(ALARM_TICK);
+  }
+}
+
+function isIdle() {
+  const st = getState();
+  return st.collectState.status === 'idle' && !st.publishRuntime;
+}
+
+/** 空闲时把「已发现外链」刷新为 IndexedDB 里该域名的存量（跨轮次累积口径） */
+async function refreshDiscoveredFromIdb() {
+  const st = getState();
+  if (st.collectState.status !== 'idle' || !st.collectState.targetDomain) return;
+  try {
+    const rows = await idbGetDomain('backlinks', st.collectState.targetDomain);
+    const n = rows.length;
+    if (n !== st.collectState.discovered) {
+      st.collectState.discovered = n;
+      st.collectState.seen = rows.map((r) => r.url);
+      await save('collectState');
+      broadcast();
+    }
+  } catch { /* IDB 不可用时跳过 */ }
+}
+
+// ---------------- 消息处理 ----------------
+
+async function handleMessage(msg, sender) {
+  await load();
+  ensureControllers();
+
+  switch (msg.type) {
+    // ---- Popup 拉取与控制 ----
+    case 'getSnapshot':
+      await refreshDiscoveredFromIdb();
+      return { ok: true, snapshot: snapshot() };
+
+    case 'startCollect':
+      await collect.start(msg.domain, msg.provider);
+      ensureAlarm(true);
+      return { ok: true, snapshot: snapshot() };
+
+    case 'stopCollect':
+      await collect.stop();
+      if (isIdle()) ensureAlarm(false);
+      return { ok: true, snapshot: snapshot() };
+
+    case 'startAnalysis':
+      await collect.startAnalysis();
+      ensureAlarm(true);
+      return { ok: true, snapshot: snapshot() };
+
+    case 'createTask': {
+      const task = {
+        id: uid(),
+        name: msg.name || '未命名任务',
+        targetUrl: (msg.targetUrl || '').trim(),
+        siteIntro: (msg.siteIntro || '').trim(),
+        mainKeyword: (msg.mainKeyword || '').trim(),
+        mode: msg.mode === 'auto' ? 'auto' : 'semi',
+        resourceIds: Array.isArray(msg.resourceIds) ? msg.resourceIds : [],
+        status: 'idle',
+        results: {},
+        createdAt: Date.now(),
+        finishedAt: 0,
+      };
+      getState().tasks.unshift(task);
+      addLog('publish', `创建任务「${task.name}」，绑定 ${task.resourceIds.length} 条资源`, 'info');
+      await save('tasks', 'logs');
+      broadcast();
+      await publish.startTask(task.id);
+      ensureAlarm(true);
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'updateTask': {
+      const task = findTask(msg.id);
+      if (task) {
+        if (typeof msg.name === 'string') task.name = msg.name;
+        if (typeof msg.targetUrl === 'string') task.targetUrl = msg.targetUrl;
+        if (typeof msg.siteIntro === 'string') task.siteIntro = msg.siteIntro.trim();
+        if (typeof msg.mainKeyword === 'string') task.mainKeyword = msg.mainKeyword.trim();
+        if (msg.mode) task.mode = msg.mode === 'auto' ? 'auto' : 'semi';
+        await save('tasks');
+        broadcast();
+      }
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'taskAction': {
+      const { id, action } = msg;
+      if (action === 'start') {
+        await publish.startTask(id);
+        ensureAlarm(true);
+      } else if (action === 'stop') {
+        await publish.stopTask(id);
+        if (isIdle()) ensureAlarm(false);
+      } else if (action === 'delete') {
+        await publish.deleteTask(id);
+      }
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'deleteResource': {
+      await removeResource(msg.id);
+      await save('resources');
+      broadcast();
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'publishOne': {
+      // 单条立即发布：包装成一个临时任务
+      const st = getState();
+      const res = st.resources.find((r) => r.id === msg.id);
+      if (!res) return { ok: false, error: '资源不存在' };
+      const task = {
+        id: uid(),
+        name: '单条发布',
+        targetUrl: st.settings.identity.website || '',
+        mode: st.settings.publishMode || 'semi',
+        resourceIds: [msg.id],
+        status: 'idle',
+        results: {},
+        createdAt: Date.now(),
+        finishedAt: 0,
+      };
+      st.tasks.unshift(task);
+      await save('tasks');
+      await publish.startTask(task.id);
+      ensureAlarm(true);
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'clearData': {
+      await collect.stop().catch(() => {});
+      await clearAll();
+      ensureAlarm(false);
+      broadcast();
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'clearLogs': {
+      getState().logs = [];
+      await save('logs');
+      broadcast();
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'setSettings': {
+      // 设置唯一写入口：options 页与 popup 都走这里，避免直接写 storage 被后台内存态覆盖
+      const st = getState();
+      const patch = msg.patch || {};
+      if (patch.language) st.settings.language = patch.language === 'en' ? 'en' : 'zh';
+      if (typeof patch.publishMode === 'string') st.settings.publishMode = patch.publishMode === 'auto' ? 'auto' : 'semi';
+      if (typeof patch.openrouterKey === 'string') st.settings.openrouterKey = patch.openrouterKey.trim();
+      if (typeof patch.sheetsWebAppUrl === 'string') st.settings.sheetsWebAppUrl = patch.sheetsWebAppUrl.trim();
+      if (patch.models && typeof patch.models === 'object') {
+        for (const k of Object.keys(st.settings.models)) {
+          if (typeof patch.models[k] === 'string') st.settings.models[k] = patch.models[k].trim();
+        }
+      }
+      if (patch.identity && typeof patch.identity === 'object') {
+        if (typeof patch.identity.name === 'string') st.settings.identity.name = patch.identity.name;
+        if (typeof patch.identity.email === 'string') st.settings.identity.email = patch.identity.email.trim();
+        if (typeof patch.identity.website === 'string') st.settings.identity.website = patch.identity.website.trim();
+      }
+      // 收集翻页随机间隔（毫秒），收敛到 1s-60s 且 min<=max
+      const clamp = (v, d) => Math.min(Math.max(Number(v) || d, 1000), 60000);
+      if (patch.pageDelayMinMs != null || patch.pageDelayMaxMs != null) {
+        let min = clamp(patch.pageDelayMinMs ?? st.settings.pageDelayMinMs, 3000);
+        let max = clamp(patch.pageDelayMaxMs ?? st.settings.pageDelayMaxMs, 9000);
+        if (min > max) [min, max] = [max, min];
+        st.settings.pageDelayMinMs = min;
+        st.settings.pageDelayMaxMs = max;
+      }
+      await save('settings');
+      broadcast();
+      return { ok: true, snapshot: snapshot() };
+    }
+
+    case 'testKey':
+      return await testKey(msg.key || '');
+
+    case 'syncSheets': {
+      const st = getState();
+      const url = msg.url || st.settings.sheetsWebAppUrl;
+      if (!url) return { ok: false, error: '未配置 Apps Script URL' };
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // 避免 Apps Script CORS 预检
+        body: JSON.stringify({ action: 'syncResources', resources: st.resources }),
+      });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      return { ok: true, count: st.resources.length };
+    }
+
+    // ---- 内容脚本上报 ----
+    // 收集数据集导出（侧边栏下载 CSV）：以 IndexedDB 按目标域名读取，跨收集轮次累积
+    case 'getBacklinksCsv': {
+      const st = getState();
+      const domain = st.collectState.targetDomain;
+      let rows = st.backlinks;
+      try {
+        const idbRows = await idbGetDomain('backlinks', domain);
+        if (idbRows.length) rows = idbRows;
+      } catch { /* IDB 不可用时退回内存缓存 */ }
+      if (!rows.length) return { ok: false, error: '还没有收集到外链数据' };
+      return { ok: true, csv: backlinksCsv(rows), count: rows.length };
+    }
+
+    case 'pub:decision': {
+      await publish.onDecision(msg.resourceId, msg.decision);
+      return { ok: true };
+    }
+
+    default:
+      return { ok: false, error: `未知消息类型: ${msg.type}` };
+  }
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  handleMessage(msg, sender)
+    .then((r) => { try { sendResponse(r || { ok: true }); } catch { /* port closed */ } })
+    .catch((e) => { try { sendResponse({ ok: false, error: e.message }); } catch { /* port closed */ } });
+  return true; // 异步响应
+});
+
+// ---- Popup 长连接：实时推送快照 ----
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'popup') return;
+  ports.add(port);
+  port.onDisconnect.addListener(() => ports.delete(port));
+});
+
+// ---- 保活 / 断点续跑 ----
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== ALARM_TICK) return;
+  (async () => {
+    await load();
+    ensureControllers();
+    const st = getState();
+    if (st.collectState.status === 'running') collect.resume();
+    if (st.publishRuntime) await publish.healthCheck();
+    if (isIdle()) ensureAlarm(false);
+  })().catch((e) => console.error('[BCM] alarm error', e));
+});
+
+chrome.runtime.onInstalled.addListener(() => {
+  (async () => {
+    await load();
+    ensureControllers();
+    await refreshDiscoveredFromIdb();
+    const st = getState();
+    // 断点续跑：安装/更新时如果状态是 running，恢复队列处理
+    if (st.collectState.status === 'running') collect.resume();
+    if (st.publishRuntime) await publish.healthCheck();
+  })().catch(console.error);
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  (async () => {
+    await load();
+    ensureControllers();
+    await refreshDiscoveredFromIdb();
+    const st = getState();
+    if (st.collectState.status === 'running') collect.resume();
+    if (st.publishRuntime) await publish.healthCheck();
+  })().catch(console.error);
+});
+
+// 标签页被用户手动关闭时清理引用
+chrome.tabs.onRemoved.addListener((tabId) => {
+  (async () => {
+    await load();
+    const st = getState();
+    if (st.collectState.providerTabId === tabId) st.collectState.providerTabId = null;
+    if (st.collectState.analyzeTabId === tabId) st.collectState.analyzeTabId = null;
+    if (st.publishRuntime && st.publishRuntime.tabId === tabId) st.publishRuntime.tabId = null;
+  })().catch(() => {});
+});
+
+// 列表页整页跳转后（SPA 内部跳转不会触发）重新注入拦截钩子
+chrome.tabs.onUpdated.addListener((tabId, info) => {
+  if (info.status !== 'complete') return;
+  (async () => {
+    await load();
+    ensureControllers();
+    const st = getState();
+    if (st.collectState.status === 'running' && st.collectState.providerTabId === tabId) {
+      collect.injectInterceptor().catch((e) => addLog('collect', `重新注入拦截器失败：${e.message}`, 'warn'));
+    }
+  })().catch(() => {});
+});

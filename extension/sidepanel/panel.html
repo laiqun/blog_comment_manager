@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>博客评论外链管理器</title>
+  <link rel="stylesheet" href="panel.css" />
+</head>
+<body>
+  <!-- 顶部 Tab -->
+  <header class="tabs" id="tabs">
+    <button class="tab active" data-tab="collect" data-i18n="tab_collect">收集</button>
+    <button class="tab" data-tab="publish" data-i18n="tab_publish">发布</button>
+    <button class="tab" data-tab="logs" data-i18n="tab_logs">日志</button>
+    <button class="tab" data-tab="library" data-i18n="tab_library">资源库</button>
+  </header>
+
+  <main id="main">
+    <!-- ===== 收集 ===== -->
+    <section id="view-collect" class="view active">
+      <div class="form-row">
+        <label class="field-label" data-i18n="targetDomain">目标域名</label>
+        <div class="input-row">
+          <input type="text" id="collect-domain" value="sprunki-game.io" placeholder="sprunki-game.io" spellcheck="false" />
+          <button id="btn-collect" class="btn btn-primary" data-i18n="startCollect">开始收集</button>
+        </div>
+        <div class="input-row" style="margin-top:8px">
+          <label class="field-label" style="margin:0 8px 0 0" data-i18n="dataSource">数据来源</label>
+          <select id="collect-provider">
+            <option value="semrush">Semrush</option>
+            <option value="ahrefs">Ahrefs</option>
+          </select>
+          <label class="field-label" style="margin:0 8px 0 16px" data-i18n="pageDelay">翻页间隔(秒)</label>
+          <input type="number" id="page-delay-min" min="1" max="60" style="width:64px" />
+          <span style="margin:0 4px">–</span>
+          <input type="number" id="page-delay-max" min="1" max="60" style="width:64px" />
+        </div>
+      </div>
+
+      <div class="card status-card" id="collect-card">
+        <div class="status-line">
+          <span class="dot" id="collect-dot"></span>
+          <span id="collect-phase" data-i18n="statusIdle">空闲中，输入域名开始收集</span>
+        </div>
+        <!-- 已发现外链：单独展示，右侧为导出按钮 -->
+        <div class="discovered-hero">
+          <span class="num" id="st-discovered">0</span>
+          <span class="lbl" data-i18n="stat_discovered">已发现外链</span>
+          <button id="btn-export-backlinks" class="btn btn-ghost btn-sm" style="margin-left:auto" data-i18n="exportBacklinks">导出收集数据 (CSV)</button>
+        </div>
+        <div class="btn-row" style="margin:28px 0 10px; padding-top:12px; border-top:1px solid var(--input)">
+          <button id="btn-analyze" class="btn btn-primary btn-sm" data-i18n="startAnalysis">开始分析</button>
+        </div>
+        <div class="stats" id="collect-stats">
+          <div class="stat"><div class="num" id="st-analyzed">0</div><div class="lbl" data-i18n="stat_analyzed">已分析</div></div>
+          <div class="stat"><div class="num" id="st-queued">0</div><div class="lbl" data-i18n="stat_queued">队列中</div></div>
+          <div class="stat"><div class="num green" id="st-matched">0</div><div class="lbl" data-i18n="stat_matched">博客评论资源</div></div>
+        </div>
+        <div class="seed-line" id="collect-seeds" hidden></div>
+        <div class="hint-line" data-i18n="matchedHint">命中的博客评论资源已存入「资源库」Tab</div>
+      </div>
+    </section>
+
+    <!-- ===== 发布 ===== -->
+    <section id="view-publish" class="view">
+      <div class="row-between">
+        <h2 class="section-title" data-i18n="publishTasks">发布任务</h2>
+        <button id="btn-new-task" class="btn btn-primary btn-sm" data-i18n="newTask">+ 新建任务</button>
+      </div>
+
+      <div id="task-list"></div>
+      <div class="empty" id="tasks-empty" data-i18n="noTasks">暂无任务，点击右上角「+ 新建任务」创建</div>
+
+      <div class="card status-card" id="publish-card" hidden>
+        <div class="status-line">
+          <span class="dot" id="publish-dot"></span>
+          <span id="publish-phase">正在发布...</span>
+        </div>
+        <div class="stats stats-5">
+          <div class="stat"><div class="num" id="pt-total">0</div><div class="lbl" data-i18n="stat_total">总计</div></div>
+          <div class="stat"><div class="num green" id="pt-success">0</div><div class="lbl" data-i18n="stat_success">成功</div></div>
+          <div class="stat"><div class="num orange" id="pt-pending">0</div><div class="lbl" data-i18n="stat_pending">待审核</div></div>
+          <div class="stat"><div class="num red" id="pt-failed">0</div><div class="lbl" data-i18n="stat_failed">失败</div></div>
+          <div class="stat"><div class="num" id="pt-remaining">0</div><div class="lbl" data-i18n="stat_remaining">剩余</div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 日志 ===== -->
+    <section id="view-logs" class="view">
+      <div class="row-between">
+        <h2 class="section-title" data-i18n="logsTitle">运行日志</h2>
+        <div style="display:flex;gap:6px">
+          <button id="btn-copy-logs" class="btn btn-ghost btn-sm" data-i18n="copyLogs">一键复制</button>
+          <button id="btn-clear-logs" class="btn btn-ghost btn-sm" data-i18n="clearLogs">清空日志</button>
+        </div>
+      </div>
+      <div id="log-list" class="log-list"></div>
+      <div class="empty" id="logs-empty" data-i18n="noLogs">暂无日志</div>
+    </section>
+
+    <!-- ===== 资源库 ===== -->
+    <section id="view-library" class="view">
+      <div class="chips" id="type-chips">
+        <button class="chip active" data-type="all" data-i18n="filterAll">全部</button>
+        <button class="chip" data-type="blog_comment" data-i18n="type_blog_comment">博客评论</button>
+        <button class="chip" data-type="profile" data-i18n="type_profile">个人主页</button>
+      </div>
+      <div class="chips" id="status-chips">
+        <button class="chip" data-status="ready" data-i18n="st_ready">可发布</button>
+        <button class="chip" data-status="published" data-i18n="st_published">已发布</button>
+        <button class="chip" data-status="failed" data-i18n="st_failed">失败</button>
+        <button class="chip" data-status="captcha" data-i18n="st_captcha">有验证码</button>
+      </div>
+      <div class="count-line" id="res-count">共 0 条资源</div>
+      <div id="res-list" class="res-list"></div>
+      <div class="empty" id="res-empty" data-i18n="noResources">暂无资源</div>
+      <button id="btn-export-csv" class="btn btn-outline btn-block" data-i18n="exportCSV">导出 CSV</button>
+    </section>
+  </main>
+
+  <!-- 页脚 -->
+  <footer class="footer">
+    <button id="btn-settings" class="footer-link" data-i18n="settings">设置</button>
+    <span class="sep">|</span>
+    <button id="btn-clear-data" class="footer-link danger" data-i18n="clearData">清空数据</button>
+    <span class="sep">|</span>
+    <button id="btn-reload" class="footer-link" data-i18n="devReloadShort" data-i18n-title="devReload">重载插件</button>
+    <span class="spacer"></span>
+    <select id="lang-select">
+      <option value="zh">中文</option>
+      <option value="en">English</option>
+    </select>
+  </footer>
+
+  <!-- 弹窗 -->
+  <div id="modal-mask" hidden>
+    <div id="modal"></div>
+  </div>
+
+  <div id="toast" hidden></div>
+
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
