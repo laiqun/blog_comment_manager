@@ -54,11 +54,11 @@ before(async () => {
     bl('https://a.com/4'), bl('https://a.com/5'),
     { targetDomain: 'other.com', url: 'https://x.com/9', domain: 'x.com', addedAt: 1 }, // 其它域名不计入
   ]);
-  const an = (url, status) => ({ targetDomain: 'example.com', url, status, checkedAt: 1 });
+  const an = (url, status, reason) => ({ targetDomain: 'example.com', url, status, reason, checkedAt: 1 });
   await idbPutAll('analysis', [
-    an('https://a.com/1', 'ready'),
-    an('https://a.com/2', 'captcha'),
-    an('https://a.com/3', 'invalid'),
+    an('https://a.com/1', 'ready', '命中，可发布'),
+    an('https://a.com/2', 'captcha', '命中，有验证码'),
+    an('https://a.com/3', 'invalid', '页面加载超时，已强制中断加载'),
   ]);
 });
 
@@ -103,4 +103,22 @@ test('getSnapshot：短时间内重复触发去抖，只刷新一次', async () 
   const second = await sendMsg({ type: 'getSnapshot' });
   assert.equal(second.snapshot.collect.discovered, 77); // 第二次被去抖跳过，保持原值
   resetStatsRefreshDebounce();
+});
+
+test('getLibraryResources：只取 analysis 表中 reason=命中，可发布 的记录', async () => {
+  const res = await sendMsg({ type: 'getLibraryResources' });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.resources.map((r) => r.url), ['https://a.com/1']); // captcha / invalid 不入选
+  const row = res.resources[0];
+  assert.equal(row.domain, 'a.com');
+  assert.equal(row.targetDomain, 'example.com');
+  assert.equal(row.type, 'blog_comment');
+  assert.equal(row.status, 'ready');
+});
+
+test('deleteLibraryRow：删掉 analysis 记录后资源库不再返回该条', async () => {
+  const res = await sendMsg({ type: 'deleteLibraryRow', targetDomain: 'example.com', url: 'https://a.com/1' });
+  assert.equal(res.ok, true);
+  const lib = await sendMsg({ type: 'getLibraryResources' });
+  assert.equal(lib.resources.length, 0);
 });

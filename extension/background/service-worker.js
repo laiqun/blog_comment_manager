@@ -3,10 +3,10 @@
  */
 import {
   load, getState, save, clearAll, addLog,
-  removeResource, findTask, taskCounts, uid,
+  addResource, removeResource, findTask, taskCounts, uid, domainOf,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
-import { idbGetDomain, idbGetAll } from '../lib/idb.js';
+import { idbGetDomain, idbGetAll, idbDelete } from '../lib/idb.js';
 import { CollectController } from './collect.js';
 import { PublishRunner } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
@@ -238,17 +238,54 @@ async function handleMessage(msg, sender) {
       return { ok: true, snapshot: snapshot() };
     }
 
+    // 资源库：直接读 IndexedDB analysis 表，筛选「命中，可发布」的记录（不经内存态）
+    case 'getLibraryResources': {
+      const rows = await idbGetAll('analysis').catch(() => []);
+      const resources = rows
+        .filter((r) => r && r.url && r.reason === '命中，可发布')
+        .sort((a, b) => (b.checkedAt || 0) - (a.checkedAt || 0)) // 新命中的在前
+        .map((r) => ({
+          url: r.url,
+          domain: domainOf(r.url),
+          targetDomain: r.targetDomain,
+          type: 'blog_comment',
+          status: 'ready',
+          checkedAt: r.checkedAt,
+        }));
+      return { ok: true, resources };
+    }
+
+    // 从资源库移除一条：删 analysis 记录（资源库不再显示）+ 资源表里的对应记录
+    case 'deleteLibraryRow': {
+      if (msg.targetDomain && msg.url) {
+        await idbDelete('analysis', [msg.targetDomain, msg.url]).catch(() => {});
+      }
+      const st = getState();
+      const hit = st.resources.find((r) => r.url === msg.url);
+      if (hit) {
+        await removeResource(hit.id);
+        await save('resources');
+      }
+      broadcast();
+      return { ok: true, snapshot: snapshot() };
+    }
+
     case 'publishOne': {
       // 单条立即发布：包装成一个临时任务
       const st = getState();
-      const res = st.resources.find((r) => r.id === msg.id);
+      let res = st.resources.find((r) => r.id === msg.id || (msg.url && r.url === msg.url));
+      if (!res && msg.url) {
+        // 资源库行直接来自 analysis 表，资源表里没有就先补建
+        await addResource({ url: msg.url, type: 'blog_comment' });
+        res = st.resources.find((r) => r.url === msg.url);
+      }
       if (!res) return { ok: false, error: '资源不存在' };
       const task = {
         id: uid(),
         name: '单条发布',
         targetUrl: st.settings.identity.website || '',
         mode: st.settings.publishMode || 'semi',
-        resourceIds: [msg.id],
+        resourceIds: [res.id],
         status: 'idle',
         results: {},
         createdAt: Date.now(),

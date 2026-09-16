@@ -10,6 +10,8 @@ let port = null;
 
 // 资源库筛选状态
 const filters = { type: 'all', status: null };
+// 资源库列表：点击「资源库」Tab 时从 IndexedDB analysis 表加载（不经快照内存态）
+let libraryRows = null;
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -182,8 +184,22 @@ function renderLogs() {
 }
 
 /* ---- 资源库 ---- */
+// 点击「资源库」Tab 时：读 IndexedDB analysis 表（reason=命中，可发布）
+async function loadLibrary() {
+  try {
+    const res = await send({ type: 'getLibraryResources' });
+    if (res && res.ok === false) return toast(res.error, 'error');
+    if (res && res.resources) {
+      libraryRows = res.resources;
+      renderLibrary();
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
 function filteredResources() {
-  let rs = snap.resources || [];
+  let rs = libraryRows || [];
   if (filters.type !== 'all') rs = rs.filter((r) => r.type === filters.type);
   if (filters.status) rs = rs.filter((r) => r.status === filters.status);
   return rs;
@@ -210,9 +226,9 @@ function renderLibrary() {
         <span class="url" title="${esc(r.url)}">${esc(short.length > 34 ? short.slice(0, 34) + '…' : short)}</span>
         <span class="badge st-${r.status}">${t('st_' + r.status)}</span>
         <span class="ops">
-          <button class="icon-btn" data-ract="open" data-id="${r.id}" title="${t('resOpen')}">🔗</button>
-          <button class="icon-btn" data-ract="publish" data-id="${r.id}" title="${t('resPublish')}">↗</button>
-          <button class="icon-btn danger" data-ract="del" data-id="${r.id}" title="${t('resDelete')}">✕</button>
+          <button class="icon-btn" data-ract="open" data-url="${esc(r.url)}" title="${t('resOpen')}">🔗</button>
+          <button class="icon-btn" data-ract="publish" data-url="${esc(r.url)}" title="${t('resPublish')}">↗</button>
+          <button class="icon-btn danger" data-ract="del" data-url="${esc(r.url)}" title="${t('resDelete')}">✕</button>
         </span>
       </div>`;
   }).join('');
@@ -315,6 +331,7 @@ function bindEvents() {
     if (!btn) return;
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn));
     document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + btn.dataset.tab));
+    if (btn.dataset.tab === 'library') loadLibrary();
   });
 
   // 收集
@@ -411,11 +428,16 @@ function bindEvents() {
   $('#res-list').addEventListener('click', async (e) => {
     const btn = e.target.closest('[data-ract]');
     if (!btn) return;
-    const id = btn.dataset.id;
-    const res = (snap.resources || []).find((r) => r.id === id);
-    if (btn.dataset.ract === 'open' && res) chrome.tabs.create({ url: res.url });
-    if (btn.dataset.ract === 'publish') await act({ type: 'publishOne', id });
-    if (btn.dataset.ract === 'del') await act({ type: 'deleteResource', id });
+    const url = btn.dataset.url;
+    const res = (libraryRows || []).find((r) => r.url === url);
+    if (!res) return;
+    if (btn.dataset.ract === 'open') chrome.tabs.create({ url: res.url });
+    if (btn.dataset.ract === 'publish') await act({ type: 'publishOne', url: res.url });
+    if (btn.dataset.ract === 'del') {
+      await act({ type: 'deleteLibraryRow', targetDomain: res.targetDomain, url: res.url });
+      libraryRows = (libraryRows || []).filter((r) => r.url !== url);
+      renderLibrary();
+    }
   });
 
   // 导出收集数据集 CSV
@@ -438,7 +460,7 @@ function bindEvents() {
 
   // 导出 CSV
   $('#btn-export-csv').addEventListener('click', () => {
-    const rs = snap.resources || [];
+    const rs = libraryRows || snap.resources || [];
     if (!rs.length) return toast(t('noResources'), 'error');
     const blob = new Blob([toCSV(rs)], { type: 'text/csv;charset=utf-8' });
     const a = document.createElement('a');
