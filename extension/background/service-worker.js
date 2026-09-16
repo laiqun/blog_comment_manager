@@ -3,7 +3,8 @@
  */
 import {
   load, getState, save, clearAll, addLog,
-  addResource, removeResource, findTask, taskCounts, uid, domainOf,
+  listResources, getResourceByUrl, addResource, findResource, removeResourceByUrl,
+  findTask, taskCounts, uid, domainOf,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
 import { idbGetDomain, idbGetAll, idbDelete } from '../lib/idb.js';
@@ -30,8 +31,9 @@ function ensureControllers() {
   if (!publish) publish = new PublishRunner(notify);
 }
 
-function snapshot() {
+async function snapshot() {
   const st = getState();
+  const resources = await listResources().catch(() => []); // 资源库直接读 IndexedDB，不经内存态
   return {
     collect: {
       status: st.collectState.status,
@@ -57,7 +59,7 @@ function snapshot() {
     publish: st.publishRuntime
       ? { taskId: st.publishRuntime.taskId, resourceId: st.publishRuntime.resourceId, stage: st.publishRuntime.stage }
       : null,
-    resources: st.resources,
+    resources,
     logs: st.logs.slice(-200).reverse(),
     settings: {
       publishMode: st.settings.publishMode,
@@ -69,8 +71,8 @@ function snapshot() {
   };
 }
 
-function broadcast() {
-  const msg = { type: 'stateChanged', snapshot: snapshot() };
+async function broadcast() {
+  const msg = { type: 'stateChanged', snapshot: await snapshot() };
   for (const p of ports) {
     try { p.postMessage(msg); } catch { /* closed */ }
   }
@@ -163,22 +165,22 @@ async function handleMessage(msg, sender) {
     // ---- Popup 拉取与控制 ----
     case 'getSnapshot':
       await refreshCollectStatsFromIdb();
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
 
     case 'startCollect':
       await collect.start(msg.domain, msg.provider);
       ensureAlarm(true);
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
 
     case 'stopCollect':
       await collect.stop();
       if (isIdle()) ensureAlarm(false);
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
 
     case 'startAnalysis':
       await collect.startAnalysis();
       ensureAlarm(true);
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
 
     case 'createTask': {
       const task = {
@@ -200,7 +202,7 @@ async function handleMessage(msg, sender) {
       broadcast();
       await publish.startTask(task.id);
       ensureAlarm(true);
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'updateTask': {
@@ -214,7 +216,7 @@ async function handleMessage(msg, sender) {
         await save('tasks');
         broadcast();
       }
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'taskAction': {
@@ -228,7 +230,7 @@ async function handleMessage(msg, sender) {
       } else if (action === 'delete') {
         await publish.deleteTask(id);
       }
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     // 资源库：直接读 IndexedDB analysis 表，筛选「命中，可发布」的记录（不经内存态）
@@ -253,24 +255,20 @@ async function handleMessage(msg, sender) {
       if (msg.targetDomain && msg.url) {
         await idbDelete('analysis', [msg.targetDomain, msg.url]).catch(() => {});
       }
-      const st = getState();
-      const hit = st.resources.find((r) => r.url === msg.url);
-      if (hit) {
-        await removeResource(hit.id);
-        await save('resources');
-      }
+      await removeResourceByUrl(msg.url).catch(() => {});
       broadcast();
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'publishOne': {
       // 单条立即发布：包装成一个临时任务
       const st = getState();
-      let res = st.resources.find((r) => r.id === msg.id || (msg.url && r.url === msg.url));
+      let res = msg.id ? await findResource(msg.id) : null;
+      if (!res && msg.url) res = await getResourceByUrl(msg.url);
       if (!res && msg.url) {
         // 资源库行直接来自 analysis 表，资源表里没有就先补建
         await addResource({ url: msg.url, type: 'blog_comment' });
-        res = st.resources.find((r) => r.url === msg.url);
+        res = await getResourceByUrl(msg.url);
       }
       if (!res) return { ok: false, error: '资源不存在' };
       const task = {
@@ -288,7 +286,7 @@ async function handleMessage(msg, sender) {
       await save('tasks');
       await publish.startTask(task.id);
       ensureAlarm(true);
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'clearData': {
@@ -296,14 +294,14 @@ async function handleMessage(msg, sender) {
       await clearAll();
       ensureAlarm(false);
       broadcast();
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'clearLogs': {
       getState().logs = [];
       await save('logs');
       broadcast();
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'setSettings': {
@@ -313,7 +311,6 @@ async function handleMessage(msg, sender) {
       if (patch.language) st.settings.language = patch.language === 'en' ? 'en' : 'zh';
       if (typeof patch.publishMode === 'string') st.settings.publishMode = patch.publishMode === 'auto' ? 'auto' : 'semi';
       if (typeof patch.openrouterKey === 'string') st.settings.openrouterKey = patch.openrouterKey.trim();
-      if (typeof patch.sheetsWebAppUrl === 'string') st.settings.sheetsWebAppUrl = patch.sheetsWebAppUrl.trim();
       if (patch.models && typeof patch.models === 'object') {
         for (const k of Object.keys(st.settings.models)) {
           if (typeof patch.models[k] === 'string') st.settings.models[k] = patch.models[k].trim();
@@ -335,24 +332,11 @@ async function handleMessage(msg, sender) {
       }
       await save('settings');
       broadcast();
-      return { ok: true, snapshot: snapshot() };
+      return { ok: true, snapshot: await snapshot() };
     }
 
     case 'testKey':
       return await testKey(msg.key || '');
-
-    case 'syncSheets': {
-      const st = getState();
-      const url = msg.url || st.settings.sheetsWebAppUrl;
-      if (!url) return { ok: false, error: '未配置 Apps Script URL' };
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // 避免 Apps Script CORS 预检
-        body: JSON.stringify({ action: 'syncResources', resources: st.resources }),
-      });
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
-      return { ok: true, count: st.resources.length };
-    }
 
     // ---- 内容脚本上报 ----
     // 收集数据集导出（侧边栏下载 CSV）：以 IndexedDB 按目标域名读取，跨收集轮次累积

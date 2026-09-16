@@ -105,6 +105,16 @@ test('getSnapshot：短时间内重复触发去抖，只刷新一次', async () 
   resetStatsRefreshDebounce();
 });
 
+test('getSnapshot：resources 直接读 IndexedDB（不经内存态），按 addedAt 新→旧', async () => {
+  await idbPutAll('resources', [
+    { id: 'r1', url: 'https://r.com/1', domain: 'r.com', type: 'blog_comment', status: 'ready', addedAt: 2, publishedAt: 0 },
+    { id: 'r2', url: 'https://r.com/2', domain: 'r.com', type: 'profile', status: 'captcha', addedAt: 3, publishedAt: 0 },
+  ]);
+  const res = await sendMsg({ type: 'getSnapshot' });
+  assert.deepEqual(res.snapshot.resources.map((r) => r.url), ['https://r.com/2', 'https://r.com/1']);
+  assert.equal('resources' in getState(), false); // 内存态不存资源
+});
+
 test('getLibraryResources：只取 analysis 表中 reason=命中，可发布 的记录', async () => {
   const res = await sendMsg({ type: 'getLibraryResources' });
   assert.equal(res.ok, true);
@@ -116,9 +126,13 @@ test('getLibraryResources：只取 analysis 表中 reason=命中，可发布 的
   assert.equal(row.status, 'ready');
 });
 
-test('deleteLibraryRow：删掉 analysis 记录后资源库不再返回该条', async () => {
+test('deleteLibraryRow：删掉 analysis 记录与同 url 资源，资源库不再返回该条', async () => {
+  await idbPutAll('resources', [
+    { id: 'r9', url: 'https://a.com/1', domain: 'a.com', type: 'blog_comment', status: 'ready', addedAt: 9, publishedAt: 0 },
+  ]);
   const res = await sendMsg({ type: 'deleteLibraryRow', targetDomain: 'example.com', url: 'https://a.com/1' });
   assert.equal(res.ok, true);
   const lib = await sendMsg({ type: 'getLibraryResources' });
   assert.equal(lib.resources.length, 0);
+  assert.equal(res.snapshot.resources.some((r) => r.url === 'https://a.com/1'), false); // 资源表同 url 记录一并清除
 });

@@ -62,7 +62,7 @@ export class PublishRunner {
   async publishOne(task, resourceId) {
     const st = getState();
     const rt = st.publishRuntime;
-    const res = findResource(resourceId);
+    const res = await findResource(resourceId);
     if (!res) return this.record(task, resourceId, 'skip', '资源已被删除');
 
     // 复用或新建发布标签页
@@ -226,14 +226,15 @@ export class PublishRunner {
     } catch { /* tab may be gone */ }
 
     rt.stage = 'working';
-    await this.notify(['publishRuntime', 'tasks', 'resources', 'logs']);
+    await this.notify(['publishRuntime', 'tasks', 'logs']);
     this.loop();
   }
 
-  record(task, resourceId, result, note) {
+  async record(task, resourceId, result, note) {
     task.results = task.results || {};
     task.results[resourceId] = result;
-    const url = findResource(resourceId)?.url || '';
+    const res = await findResource(resourceId).catch(() => null);
+    const url = res ? res.url : '';
     const icon = result === 'success' ? '✓' : result === 'fail' ? '✗' : '⊘';
     const level = result === 'success' ? 'success' : result === 'fail' ? 'error' : 'info';
     addLog('publish', `${icon} ${note}`, level, url);

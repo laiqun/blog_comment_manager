@@ -1,4 +1,8 @@
 // chrome.storage 最小内存桩：只为让 storage.js 的纯逻辑能跑，非浏览器模拟
+import { installIdbStub } from './stubs.mjs';
+
+installIdbStub();
+
 const mem = new Map();
 globalThis.chrome = {
   storage: {
@@ -13,36 +17,43 @@ globalThis.chrome = {
   },
 };
 
-const { load, getState, save, addResource, findResource, updateResource, removeResource, addLog, taskCounts, uid, domainOf } =
+const { load, getState, save, listResources, addResource, getResourceByUrl, findResource, updateResource, updateResourceByUrl, removeResource, addLog, taskCounts, uid, domainOf } =
   await import('../extension/lib/storage.js');
+const { idbGetAll } = await import('../extension/lib/idb.js');
 const { LIMITS } = await import('../extension/lib/config.js');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 test('addResource 去重且默认状态为可发布', async () => {
   await load();
-  assert.equal(await addResource({ url: 'https://a.com/1', type: 'blog_comment' }), true);
-  assert.equal(await addResource({ url: 'https://a.com/1', type: 'blog_comment' }), false);
-  const r = getState().resources[0];
+  const r = await addResource({ url: 'https://a.com/1', type: 'blog_comment' });
   assert.equal(r.status, 'ready');
   assert.equal(r.domain, 'a.com');
+  assert.equal(await addResource({ url: 'https://a.com/1', type: 'blog_comment' }), false);
 });
 
-test('findResource / updateResource / removeResource', async () => {
-  const id = getState().resources[0].id;
-  assert.ok(findResource(id));
-  await updateResource(id, { status: 'published', publishedAt: 123 });
-  assert.equal(findResource(id).status, 'published');
-  await removeResource(id);
-  assert.equal(findResource(id), undefined);
+test('资源库以 IndexedDB 为唯一持久层，不进内存态', async () => {
+  assert.equal('resources' in getState(), false);
+  assert.ok(await getResourceByUrl('https://a.com/1'));
+  const [first] = await listResources();
+  assert.equal(first.url, 'https://a.com/1'); // listResources 按 addedAt 新→旧排序
+});
+
+test('findResource / updateResource / updateResourceByUrl / removeResource', async () => {
+  const [r] = await listResources();
+  assert.ok(await findResource(r.id));
+  await updateResource(r.id, { status: 'captcha' });
+  assert.equal((await findResource(r.id)).status, 'captcha');
+  await updateResourceByUrl(r.url, { status: 'published', publishedAt: 123 });
+  assert.equal((await findResource(r.id)).status, 'published');
+  await removeResource(r.id);
+  assert.equal(await findResource(r.id), undefined);
+  assert.equal(await getResourceByUrl(r.url), undefined);
 });
 
 test('taskCounts 统计成功/失败/跳过/待审核/剩余', async () => {
   const st = getState();
-  for (const u of ['https://x.com/1', 'https://x.com/2', 'https://x.com/3', 'https://x.com/4']) {
-    await addResource({ url: u, type: 'blog_comment' });
-  }
-  const ids = st.resources.map((r) => r.id);
+  const ids = ['r1', 'r2', 'r3', 'r4'];
   const task = { id: 't', name: 'n', targetUrl: '', mode: 'semi', resourceIds: ids, status: 'running', results: {}, createdAt: 0, finishedAt: 0 };
   st.tasks.push(task);
   task.results[ids[0]] = 'success';
@@ -63,21 +74,21 @@ test('addLog 有上限且新日志在末尾', () => {
   assert.equal(logs.at(-1).msg, `log-${LIMITS.logCap + 9}`);
 });
 
-test('save 序列化到 chrome.storage 且可清空', async () => {
+test('save 不再把 resources 写进 chrome.storage', async () => {
   await addResource({ url: 'https://s.com/1', type: 'profile' });
-  await save('resources');
-  const stored = mem.get('bcm_store');
-  assert.ok(stored.resources.some((r) => r.url === 'https://s.com/1'));
+  await save(); // 全量保存
+  assert.equal(mem.get('bcm_store').resources, undefined);
+  assert.ok((await idbGetAll('resources')).some((r) => r.url === 'https://s.com/1'));
   assert.equal(uid().length > 10, true);
 });
 
 test('save 部分 key 合并写入，不抹掉其它字段', async () => {
   getState().logs = [{ t: 1, src: 'collect', msg: 'keep-me' }];
   await save('logs');
-  await save('resources'); // 第二次只存 resources，logs 必须还在
+  await save('tasks'); // 第二次只存 tasks，logs 必须还在
   const stored = mem.get('bcm_store');
   assert.ok(stored.logs && stored.logs.length === 1);
-  assert.ok(stored.resources.length >= 1);
+  assert.ok(Array.isArray(stored.tasks));
 });
 
 test('domainOf 去掉 www', () => {

@@ -1,6 +1,6 @@
 /**
  * 内存版 IndexedDB 最小桩：只为让 idb.js 的逻辑能在 Node 里跑，非浏览器模拟。
- * 支持 idb.js 用到的 put / getAll(范围) / delete / clear，复合主键按数组字典序比较。
+ * 支持 idb.js 用到的 put / get / getAll(范围) / delete / clear，复合主键按数组字典序比较。
  */
 export function installIdbStub() {
   const keyOf = (k) => (Array.isArray(k) ? JSON.stringify(k) : String(k));
@@ -34,6 +34,15 @@ export function installIdbStub() {
       },
       delete(key) { meta.rows.delete(keyOf(key)); return req(); },
       clear() { meta.rows.clear(); return req(); },
+      get(key) {
+        const r = {};
+        queueMicrotask(() => {
+          const hit = meta.rows.get(keyOf(key));
+          r.result = hit ? hit.value : undefined;
+          r.onsuccess && r.onsuccess();
+        });
+        return r;
+      },
       getAll(range) {
         const r = {};
         queueMicrotask(() => {

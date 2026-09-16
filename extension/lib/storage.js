@@ -4,7 +4,7 @@
  * 大数据量表（backlinks / analysis / resources）只存 IndexedDB，不进 chrome.storage。
  */
 import { DEFAULT_SETTINGS, LIMITS } from './config.js';
-import { idbPutAll, idbPut, idbDelete, idbGetAll, idbClear } from './idb.js';
+import { idbPutAll, idbPut, idbGet, idbDelete, idbGetAll, idbClear } from './idb.js';
 
 const STORAGE_KEY = 'bcm_store';
 
@@ -28,7 +28,6 @@ const EMPTY_COLLECT = () => ({
 
 const state = {
   settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
-  resources: [],         // {id, url, domain, type:'blog_comment'|'profile', status:'ready'|'published'|'failed'|'captcha', addedAt, publishedAt}
   collectState: EMPTY_COLLECT(),
   tasks: [],             // {id, name, targetUrl, mode, resourceIds, status, results:{id:'success'|'skip'|'fail'|'captcha'}, createdAt, finishedAt}
   activeTaskId: null,
@@ -48,7 +47,6 @@ export async function load() {
   if (saved) {
     Object.assign(state, {
       settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...saved.settings, models: { ...DEFAULT_SETTINGS.models, ...(saved.settings?.models || {}) }, identity: { ...DEFAULT_SETTINGS.identity, ...(saved.settings?.identity || {}) } },
-      resources: saved.resources || [],
       collectState: { ...EMPTY_COLLECT(), ...(saved.collectState || {}) },
       tasks: saved.tasks || [],
       activeTaskId: saved.activeTaskId ?? null,
@@ -58,7 +56,7 @@ export async function load() {
   }
   state.loaded = true;
   await migrateBacklinksToIdb(saved);
-  await restoreResourcesFromIdb();
+  await migrateResourcesToIdb(saved);
   return state;
 }
 
@@ -81,20 +79,22 @@ async function migrateBacklinksToIdb(saved) {
   } catch { /* IDB 不可用时保留原样，下次启动再迁移 */ }
 }
 
-/** 资源库以 IndexedDB 为持久层：启动时恢复；旧数据（仅在 chrome.storage）自动迁移过去 */
-async function restoreResourcesFromIdb() {
+/** 旧版 resources 双写在 chrome.storage：一次性迁移到 IndexedDB（唯一持久层）后从 storage 移除 */
+async function migrateResourcesToIdb(saved) {
+  const rows = saved && saved.resources;
+  if (!Array.isArray(rows) || !rows.length) return;
   try {
-    const rows = await idbGetAll('resources');
-    if (rows.length) {
-      state.resources = rows;
-    } else if (state.resources.length) {
-      await idbPutAll('resources', state.resources); // 旧数据迁移
-    }
-  } catch { /* IndexedDB 不可用时继续用 chrome.storage 的数据 */ }
+    const valid = rows.filter((r) => r && r.url);
+    if (valid.length) await idbPutAll('resources', valid);
+    const data = await chrome.storage.local.get(STORAGE_KEY);
+    const cur = data[STORAGE_KEY] || {};
+    delete cur.resources;
+    await chrome.storage.local.set({ [STORAGE_KEY]: cur });
+  } catch { /* IDB 不可用时保留原样，下次启动再迁移 */ }
 }
 
 export async function save(...keys) {
-  const all = ['settings', 'resources', 'collectState', 'tasks', 'activeTaskId', 'publishRuntime', 'logs'];
+  const all = ['settings', 'collectState', 'tasks', 'activeTaskId', 'publishRuntime', 'logs'];
   const list = keys && keys.length ? keys : all;
   const payload = {};
   for (const k of list) {
@@ -108,7 +108,6 @@ export async function save(...keys) {
 export async function clearAll() {
   await chrome.storage.local.remove(STORAGE_KEY);
   state.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
-  state.resources = [];
   state.collectState = EMPTY_COLLECT();
   state.tasks = [];
   state.activeTaskId = null;
@@ -125,13 +124,24 @@ export function addLog(src, msg, level = 'info', url = '') {
 }
 
 // ---------- 资源库 ----------
+// {id, url, domain, type:'blog_comment'|'profile', status:'ready'|'published'|'failed'|'captcha', addedAt, publishedAt}
+// 唯一持久层是 IndexedDB（主键 [url]），不进内存态；每次读写直接走 IndexedDB。
+
+export async function listResources() {
+  const rows = await idbGetAll('resources');
+  return rows.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0)); // 新的在前
+}
 
 export function domainOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
+export async function getResourceByUrl(url) {
+  return idbGet('resources', [url]);
+}
+
 export async function addResource({ url, type, note = '' }) {
-  if (state.resources.some((r) => r.url === url)) return false;
+  if (await getResourceByUrl(url)) return false;
   const r = {
     id: uid(),
     url,
@@ -142,30 +152,44 @@ export async function addResource({ url, type, note = '' }) {
     publishedAt: 0,
     note,
   };
-  state.resources.unshift(r);
-  idbPut('resources', r).catch(() => {}); // 持久镜像到 IndexedDB
-  return true;
+  try {
+    await idbPut('resources', r);
+  } catch (e) {
+    addLog('system', `资源写入 IndexedDB 失败：${e.message}`, 'warn', url);
+  }
+  return r;
 }
 
-export function findResource(id) {
-  return state.resources.find((r) => r.id === id);
+export async function findResource(id) {
+  const rows = await idbGetAll('resources');
+  return rows.find((r) => r.id === id);
 }
 
 export async function updateResource(id, patch) {
-  const r = findResource(id);
+  const r = await findResource(id);
   if (r) {
     Object.assign(r, patch);
-    idbPut('resources', r).catch(() => {}); // 持久镜像到 IndexedDB
+    await idbPut('resources', r);
+  }
+  return r;
+}
+
+export async function updateResourceByUrl(url, patch) {
+  const r = await getResourceByUrl(url);
+  if (r) {
+    Object.assign(r, patch);
+    await idbPut('resources', r);
   }
   return r;
 }
 
 export async function removeResource(id) {
-  const i = state.resources.findIndex((r) => r.id === id);
-  if (i >= 0) {
-    const [r] = state.resources.splice(i, 1);
-    idbDelete('resources', r.url).catch(() => {}); // 同步删除 IndexedDB
-  }
+  const r = await findResource(id);
+  if (r) await idbDelete('resources', [r.url]);
+}
+
+export async function removeResourceByUrl(url) {
+  await idbDelete('resources', [url]);
 }
 
 // ---------- 任务 ----------

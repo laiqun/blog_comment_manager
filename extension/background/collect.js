@@ -6,7 +6,7 @@
  * 4. 「开始分析」单独触发：数据集逐条访问 → 分析器采集 → AI 分类 → 命中入库
  * 5. 评论区提取评论者网站作为滚雪球种子
  */
-import { getState, save, addLog, addResource, updateResource } from '../lib/storage.js';
+import { getState, save, addLog, addResource, updateResourceByUrl } from '../lib/storage.js';
 import { PROVIDERS, ANALYZE_SELECTORS, LOGIN_HINTS, LIMITS } from '../lib/config.js';
 import { idbPutAll, idbPut, idbGetDomain } from '../lib/idb.js';
 import { waitTabComplete, sleep, hostMatches } from '../lib/util.js';
@@ -467,13 +467,10 @@ export class CollectController {
         addLog('collect', '未找到评论表单，不匹配', 'info', url);
         return;
       }
-      const added = await addResource({ url, type: 'blog_comment' });
-      if (added) {
+      const r = await addResource({ url, type: 'blog_comment' });
+      if (r) {
         cs.matched += 1;
-        if (data.hasCaptcha) {
-          const r = getState().resources.find((x) => x.url === url);
-          if (r) await updateResource(r.id, { status: 'captcha' });
-        }
+        if (data.hasCaptcha) await updateResourceByUrl(url, { status: 'captcha' });
         await this.recordAnalysis(cs.targetDomain, url, data.hasCaptcha ? 'captcha' : 'ready',
           data.hasCaptcha ? '命中，有验证码' : '命中，可发布');
         addLog('collect', `命中博客评论资源（评论表单=有${data.hasCaptcha ? '，验证码=有' : ''}）`, 'success', url);

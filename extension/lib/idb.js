@@ -3,7 +3,7 @@
  * 库 bcm-idb；stores：
  *  - backlinks：已发现外链，主键 [targetDomain, url]（按域名归档、同域 url 去重、覆盖写）
  *  - analysis ：分析结论 {status, reason, checkedAt}，主键 [targetDomain, url]
- *  - resources：资源库（博客评论资源），主键 url
+ *  - resources：资源库（博客评论资源），主键 [url]（单字段复合键，get/delete 需传数组）
  */
 const DB_NAME = 'bcm-idb';
 const STORE_META = [
@@ -42,6 +42,17 @@ export async function idbPutAll(store, rows) {
 
 export async function idbPut(store, row) {
   return idbPutAll(store, [row]);
+}
+
+/** 按主键取单条记录（复合主键传数组，如 resources 表传 [url]） */
+export async function idbGet(store, key) {
+  const db = await open();
+  return new Promise((resolve, reject) => {
+    const os = db.transaction(store, 'readonly').objectStore(store);
+    const req = os.get(key);
+    req.onsuccess = () => resolve(req.result || undefined);
+    req.onerror = () => reject(req.error);
+  });
 }
 
 export async function idbDelete(store, key) {

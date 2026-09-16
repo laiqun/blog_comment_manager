@@ -145,12 +145,6 @@ export const MESSAGES = {
   idWebsite: { zh: '网址（默认落地链接）', en: 'Website (default target link)' },
   publishCardTitle: { zh: '发布设置', en: 'Publish Settings' },
   publishModeLabel: { zh: '默认发布模式', en: 'Default Publish Mode' },
-  sheetsCardTitle: { zh: 'Google Sheets 同步', en: 'Google Sheets Sync' },
-  sheetsUrlLabel: { zh: 'Apps Script Web App 地址', en: 'Apps Script Web App URL' },
-  sheetsUrlDesc: { zh: '在 Google Sheets 里部署一个 Apps Script Web App（doPost 接收 JSON），把地址填到这里即可一键备份资源库。', en: 'Deploy an Apps Script Web App (doPost accepting JSON) on your sheet, paste the URL here to back up resources in one click.' },
-  btnSync: { zh: '同步资源库', en: 'Sync Resources' },
-  syncOk: { zh: '✓ 同步成功', en: '✓ Synced' },
-  syncFail: { zh: '✗ 同步失败', en: '✗ Sync failed' },
   languageLabel: { zh: '界面语言', en: 'UI Language' },
 
   // ---- 发布浮层（content script）----

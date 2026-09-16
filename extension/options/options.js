@@ -29,7 +29,6 @@ function saveSettings() {
           openrouterKey: settings.openrouterKey,
           models: settings.models,
           identity: settings.identity,
-          sheetsWebAppUrl: settings.sheetsWebAppUrl,
           publishMode: settings.publishMode,
           language: settings.language,
         },
@@ -108,27 +107,6 @@ async function init() {
     setLanguage(settings.language);
     applyI18n();
     saveSettings(); // setSettings 已包含 language，无需重复发消息
-  });
-
-  // Google Sheets 同步
-  bindField('#sheets-url', () => settings.sheetsWebAppUrl, (v) => (settings.sheetsWebAppUrl = v.trim()));
-  $('#btn-sync').addEventListener('click', async () => {
-    const out = $('#sync-result');
-    out.textContent = '...';
-    out.className = 'hint';
-    try {
-      const res = await chrome.runtime.sendMessage({ type: 'syncSheets', url: $('#sheets-url').value.trim() });
-      if (res && res.ok) {
-        out.textContent = `${t('syncOk')} (${res.count})`;
-        out.className = 'hint ok';
-      } else {
-        out.textContent = `${t('syncFail')} ${res?.error || ''}`;
-        out.className = 'hint err';
-      }
-    } catch (e) {
-      out.textContent = `${t('syncFail')} ${e.message}`;
-      out.className = 'hint err';
-    }
   });
 }
 
