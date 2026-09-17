@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS = {
   },
   publishMode: 'semi',     // semi=半自动(人工确认) / auto=全自动
   language: 'zh',          // zh / en
+  summaryLang: 'zh',       // 标题与摘要语言：zh=中文 / en=英文（浮层展示与下游 AI 步骤共用）
   analyzeDelayMs: 800,     // 分析队列每条之间的间隔
   aiDelayMs: 400,          // AI 请求最小间隔
   pageDelayMinMs: 3000,    // 收集翻页最小间隔（可在收集 Tab 配置）

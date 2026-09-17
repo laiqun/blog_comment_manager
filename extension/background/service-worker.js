@@ -395,6 +395,7 @@ async function handleMessage(msg, sender) {
       const st = getState();
       const patch = msg.patch || {};
       if (patch.language) st.settings.language = patch.language === 'en' ? 'en' : 'zh';
+      if (patch.summaryLang) st.settings.summaryLang = patch.summaryLang === 'en' ? 'en' : 'zh';
       if (typeof patch.publishMode === 'string') st.settings.publishMode = patch.publishMode === 'auto' ? 'auto' : 'semi';
       if (typeof patch.logEnabled === 'boolean') st.settings.logEnabled = patch.logEnabled;
       if (typeof patch.openrouterKey === 'string') st.settings.openrouterKey = patch.openrouterKey.trim();

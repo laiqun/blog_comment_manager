@@ -159,6 +159,7 @@ export const MESSAGES = {
   publishCardTitle: { zh: '发布设置', en: 'Publish Settings' },
   publishModeLabel: { zh: '默认发布模式', en: 'Default Publish Mode' },
   languageLabel: { zh: '界面语言', en: 'UI Language' },
+  summaryLangLabel: { zh: '标题与摘要语言', en: 'Title & Summary Language' },
 
   // ---- 发布浮层（content script）----
   overlayTitle: { zh: 'Comment Ready', en: 'Comment Ready' },

@@ -88,6 +88,53 @@ test('content 为空且 finish_reason=length 时报错提示思考占用额度',
   await assert.rejects(chat('classify', [{ role: 'user', content: 'hi' }]), /截断/);
 });
 
+test('summarizeArticle 返回指定语言的标题与摘要并识别文章语言，空摘要报错', async () => {
+  const { summarizeArticle } = await import('../extension/lib/openrouter.js');
+  stubFetch('{"title":"中文标题","summary":"文章讲了三个要点：A、B、C。","language":"English"}');
+  const s = await summarizeArticle({ title: 'English Title', text: '很长很长的正文'.repeat(100), lang: 'zh' });
+  assert.equal(s.title, '中文标题');
+  assert.equal(s.summary, '文章讲了三个要点：A、B、C。');
+  assert.equal(s.language, 'English');
+  // 模型没给 title 时回退原标题
+  stubFetch('{"title":"","summary":"摘要"}');
+  const s2 = await summarizeArticle({ title: 'Orig', text: 'x' });
+  assert.equal(s2.title, 'Orig');
+  stubFetch('{"title":"t","summary":"  "}');
+  await assert.rejects(summarizeArticle({ title: 't', text: 'x' }), /摘要为空/);
+});
+
+test('generateComment 评论语言跟随文章语言', async () => {
+  const { generateComment } = await import('../extension/lib/openrouter.js');
+  let captured;
+  globalThis.fetch = async (url, init) => {
+    captured = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '评论内容' } }] }) };
+  };
+  await generateComment({ url: 'https://a.com/1', title: 't', text: '摘要' }, { articleLang: '中文' });
+  assert.ok(captured.messages[0].content.includes('中文'), 'prompt 应要求用文章语言写评论');
+  assert.ok(captured.messages[1].content.includes('中文'), 'user 消息应带上文章语言');
+  // 未识别到语言时：仅要求与文章语言一致，不写死语种
+  await generateComment({ url: 'https://a.com/1', title: 't', text: '摘要' }, {});
+  assert.ok(captured.messages[0].content.includes('与文章相同的语言'));
+});
+
+test('generateComment 无占位符时不强插链接（AI 判断无交集）', async () => {
+  const { generateComment } = await import('../extension/lib/openrouter.js');
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ choices: [{ message: { content: 'This article really resonates with me.' } }] }),
+  });
+  const out = await generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, { targetUrl: 'https://x.com/', mainKeyword: 'kw' });
+  assert.ok(!out.includes('<a'), '无占位符时不应在句尾硬插链接');
+  // 有占位符时正常替换为 <a>
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ choices: [{ message: { content: 'I made one with {{LINK:this free tool}} last week.' } }] }),
+  });
+  const out2 = await generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, { targetUrl: 'https://x.com/', mainKeyword: 'kw' });
+  assert.ok(out2.includes('<a href="https://x.com/\n">this free tool</a>'));
+});
+
 test('buildCommentWithLink：占位符替换、href 右引号前换行、无占位符时追加', async () => {
   const { buildCommentWithLink } = await import('../extension/lib/openrouter.js');
   // 占位符替换

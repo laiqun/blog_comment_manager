@@ -31,7 +31,7 @@ extension/
 │   └── publish.js           # PublishRunner：任务逐条执行 → 表单识别 → 评论生成 → 填表 → 人工确认
 ├── content/                 # 由 background 用 scripting 注入，不走 manifest content_scripts
 │   ├── analyzer.js          # window.__BCM_ANALYZE__：采集标题/正文/评论表单/评论区信息
-│   └── publisher.js         # window.__BCM_PUB__：detect/fill/submit/cleanup/markForm/showComment + Comment Ready 浮层（IIFE，非 ESM）
+│   └── publisher.js         # window.__BCM_PUB__：detect/fill/submit/cleanup/markForm/showComment/showSummary + 浮层（IIFE，非 ESM）；全框架注入（评论框可能在 iframe 里），detect 会排除浮层自身的输入框/按钮
 ├── lib/
 │   ├── config.js            # ★ 所有「待联调」的选择器、URL 模板、默认值集中在这里，联调只改这个文件
 │   ├── storage.js           # chrome.storage.local 内存镜像 + 任务/日志操作 + 旧数据迁移（资源数据全在 IDB）
@@ -40,7 +40,7 @@ extension/
 │   ├── i18n.js              # 中/英字典（MESSAGES）+ applyI18n
 │   └── util.js              # URL 处理、CSV（带 BOM）、tab 等待等纯函数
 ├── sidepanel/               # 侧边栏主界面（panel.html/css/js）：收集/发布/日志/资源库四 Tab，点工具栏图标打开
-├── options/                 # 设置页：API Key / 四模型 / 发布身份 / 语言 / 翻页间隔
+├── options/                 # 设置页：API Key / 四模型 / 发布身份 / 语言 / 标题与摘要语言 / 翻页间隔
 └── _locales/                # 仅扩展名称与描述（zh_CN / en）
 docs/                        # 设计文档（插件界面描述.md）
 test/                        # Node 自带 node:test 单测（见下）
@@ -54,7 +54,7 @@ test/                        # Node 自带 node:test 单测（见下）
 - **MV3 service worker 随时被回收**：所有状态落盘后才能丢；`chrome.alarms`（`bcm-tick`，30 秒）负责唤醒续跑收集/发布队列，并把回收途中卡住的 `stopping` 状态收尾为 `idle`；`onInstalled`/`onStartup` 做断点续跑。
 - **UI ↔ 后台通信**：sidepanel 用 `sendMessage` RPC（`getSnapshot`、`startCollect`、`createTask`、`setSettings` 等）；后台状态推送走 `chrome.runtime.sendMessage` 单向广播（`stateChanged` 快照），**不用 port 长连接**——无连接状态，SW 回收重启后新实例照样送达，面板关着时静默丢弃、打开时由 `init()` 的 `getSnapshot` 追平。**设置的唯一写入口是 `setSettings` 消息**，options 页也不得直接写 storage（会被后台内存态覆盖）。
 - **收集统计口径**：空闲时（`getSnapshot` 触发，3 秒去抖）从 IndexedDB 重新计算已发现/已分析/队列中/命中（见 `service-worker.js` 的 `refreshCollectStatsFromIdb`）。
-- **AI 调用**：全走 OpenRouter `/chat/completions`，`chatJSON` 要求 `json_object` 输出并有脏输出兜底提取；四个角色模型可在设置页分别配置，默认 `z-ai/glm-5.3-flash`；调用间有 `aiDelayMs` 节流。所有请求带 `reasoning: { effort: 'low' }`（GLM 这类思考模型默认推理很长，会把 `max_tokens` 吃光导致 `content` 为空、`finish_reason: length`），且各角色的 `maxTokens` 预算已按「思考 + 正文」留足。评论内嵌链接用 `{{LINK:锚文本}}` 占位符，由 `buildCommentWithLink` 替换为 `<a>`。
+- **AI 调用**：全走 OpenRouter `/chat/completions`，`chatJSON` 要求 `json_object` 输出并有脏输出兜底提取；四个角色模型可在设置页分别配置，默认 `z-ai/glm-5.3-flash`；调用间有 `aiDelayMs` 节流。所有请求带 `reasoning: { effort: 'low' }`（GLM 这类思考模型默认推理很长，会把 `max_tokens` 吃光导致 `content` 为空、`finish_reason: length`），且各角色的 `maxTokens` 预算已按「思考 + 正文」留足。发布时先用 `summarizeArticle`（复用 classify 模型）把可能截断的正文提炼成标题+摘要并识别文章语言（标题/摘要的输出语言由 `settings.summaryLang` 决定，默认中文，设置页可改），相关性判断/评论生成/身份生成统一吃摘要，**评论语言跟随文章语言**（`generateComment` 的 `articleLang` 参数，识别不到时仅要求与文章一致）；半自动模式摘要缓存于 `rt.manual.summary`/`sumTitle`/`artLang`，反复生成评论不重复总结；摘要失败退回原标题+原始摘录。半自动浮层有独立「获取标题与摘要」步骤按钮，结果（含文章语言）连同评论/身份一起展示在浮层上（各字段带复制按钮）。评论内嵌链接用 `{{LINK:锚文本}}` 占位符，由 `buildCommentWithLink` 替换为 `<a>`；提示词要求链接必须与摘要中的论点有真实交集才放，模型未输出占位符（判断无自然交集）时**不强插链接**（日志注明「未带链接」）。
 - **数据源联调**：Semrush 走「面板模式」（已联调通过）：用户需先在 dash.3ue.co 打开工具并停留在 `sem.3ue.co` 标签，插件校验当前标签后取 URL 里的 `__gmitm` 令牌直达报告页。Ahrefs 是「直连模式」占位（`backlinksUrlTemplate` 等留空待联调）。新增数据源时只改 `lib/config.js` 的 `PROVIDERS`。
 
 ## 构建与测试命令

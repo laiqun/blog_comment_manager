@@ -1,7 +1,8 @@
 /**
  * 发布任务调度器：
  * 任务 = 一批资源（resourceUrls，即可用资源的页面 URL，来自 analysis 表命中记录）。逐条执行：
- *   打开页面 → 注入 publisher → 采集页面信息（验证码/登录/表单检查，非 AI）
+ *   打开页面 → 全框架注入 publisher（评论框可能在 iframe 里，如 Disqus；detect 跨框架合并、
+ *   填表/提交/高亮按表单所在 frameId 定向）→ 采集页面信息（验证码/登录/表单检查，非 AI）
  *   → 全自动：AI 表单识别 → AI 生成评论 → 自动填表 → 直接提交
  *   → 半自动：停在 awaiting_steps，由浮层按钮手动触发（「生成评论」与「识别表单」互不依赖、
  *     可任意顺序执行，生成评论可反复点击换一条；「填写表单」需评论已生成），
@@ -13,7 +14,7 @@
 import { getState, save, addLog, findTask } from '../lib/storage.js';
 import { PUBLISH_SELECTORS, LIMITS } from '../lib/config.js';
 import { idbGet, idbPut, idbGetAll } from '../lib/idb.js';
-import { detectForm, generateComment, checkRelevance, generateIdentity } from '../lib/openrouter.js';
+import { detectForm, generateComment, checkRelevance, generateIdentity, summarizeArticle } from '../lib/openrouter.js';
 import { waitTabComplete, sleep } from '../lib/util.js';
 
 /** AI 表单识别失败时的兜底选择器（WordPress 默认评论表单） */
@@ -99,6 +100,71 @@ export class PublishRunner {
     } catch { /* 标记失败不影响主流程 */ }
   }
 
+  /** 注入 publisher.js 到页面的所有框架（评论框可能在 iframe 里，如 Disqus）；个别框架不可注入时退回主框架 */
+  async injectAll(tabId) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: ['content/publisher.js'] });
+    } catch {
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content/publisher.js'] });
+    }
+  }
+
+  /**
+   * 跨框架采集：在每个框架里执行 detect 并合并结果。
+   * 标题/正文取主框架；表单候选跨框架合并并带上 frameId（后续填表/提交/高亮按 frameId 定向）；
+   * 验证码与登录提示可能在 iframe 里，跨框架取并集。
+   */
+  async detectAll(tabId) {
+    const cfg = {
+      func: (c) => window.__BCM_PUB__ && window.__BCM_PUB__.detect(c),
+      args: [{ selectors: PUBLISH_SELECTORS }],
+    };
+    let results;
+    try {
+      results = await chrome.scripting.executeScript({ ...cfg, target: { tabId, allFrames: true } });
+    } catch {
+      // 个别框架无法注入时（如 chrome:// 子框架）退回只采主框架
+      results = await chrome.scripting.executeScript({ ...cfg, target: { tabId } });
+    }
+    const frames = (results || []).filter((r) => r && r.result && r.result.ok);
+    if (!frames.length) return null;
+    const top = frames.find((r) => r.frameId === 0) || frames[0];
+    const forms = [];
+    for (const r of frames) {
+      for (const f of r.result.forms || []) forms.push({ ...f, frameId: r.frameId });
+    }
+    forms.sort((a, b) => (b.visible ? 1 : 0) - (a.visible ? 1 : 0));
+    return {
+      ok: true,
+      title: top.result.title,
+      excerpt: top.result.excerpt,
+      forms: forms.slice(0, 3),
+      hasCaptcha: frames.some((r) => r.result.hasCaptcha),
+      loginRequired: frames.some((r) => r.result.loginRequired),
+    };
+  }
+
+  /** 在表单所在框架里执行填表/提交/高亮（表单可能在 iframe 中；浮层操作仍在主框架） */
+  async frameCall(tabId, frameId, fn, arg) {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId || 0] },
+      func: (f, a) => window.__BCM_PUB__ && window.__BCM_PUB__[f] && window.__BCM_PUB__[f](a),
+      args: [fn, arg],
+    });
+    return res && res.result;
+  }
+
+  /** 标题与摘要：长正文先经 AI 提炼（语言由设置 summaryLang 决定）；失败退回原标题 + 原始摘录 */  async summarize(url, title, excerpt) {
+    try {
+      const art = await summarizeArticle({ title, text: excerpt, lang: getState().settings.summaryLang || 'zh' });
+      addLog('ai', `标题与摘要完成（${art.summary.length} 字）`, 'info', url);
+      return art;
+    } catch (e) {
+      addLog('ai', `标题与摘要失败，改用原标题与原始摘录：${e.message}`, 'warn', url);
+      return { title: title || '', summary: excerpt || '', language: '' };
+    }
+  }
+
   async publishOne(task, url) {
     const st = getState();
     const rt = st.publishRuntime;
@@ -127,8 +193,8 @@ export class PublishRunner {
     if (!okNav) return this.recordKeepTab(task, rt, url, 'fail', '页面加载超时');
     await sleep(LIMITS.pageSettleMs);
 
-    // 注入并采集页面信息；半自动模式页面一打开就显示浮层（状态随流程更新）
-    await chrome.scripting.executeScript({ target: { tabId }, files: ['content/publisher.js'] });
+    // 注入并采集页面信息（全框架：评论框可能在 iframe 里）；半自动模式页面一打开就显示浮层（状态随流程更新）
+    await this.injectAll(tabId);
     // 「定位目标链接」参考的是收集时输入的同行站点域名：资源页面里本就存在指向它的外链
     let refDomain = '';
     try {
@@ -143,12 +209,7 @@ export class PublishRunner {
         args: [{ lang: st.settings.language, refDomain, resourceUrl: url }],
       }).catch(() => {});
     }
-    const [det] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (cfg) => window.__BCM_PUB__ && window.__BCM_PUB__.detect(cfg),
-      args: [{ selectors: PUBLISH_SELECTORS }],
-    });
-    const d = det && det.result;
+    const d = await this.detectAll(tabId).catch(() => null);
     if (getState().publishRuntime !== rt) return;
     if (!d) return this.recordKeepTab(task, rt, url, 'fail', '无法注入页面脚本（可能被反爬拦截）');
     if (d.hasCaptcha) {
@@ -175,19 +236,23 @@ export class PublishRunner {
     if (task.mode !== 'auto') {
       rt.stage = 'awaiting_steps';
       rt.refDomain = refDomain;
-      rt.manual = { title: d.title, excerpt: d.excerpt, form: null, comment: null, identity: null };
-      addLog('publish', '页面已就绪，请在浮层中按步骤手动执行（识别表单 → 生成评论 → 填写表单）', 'info', url);
+      // frameId 预填表单候选所在框架：用户跳过「识别表单」直接填表时也能定向到 iframe
+      rt.manual = { title: d.title, excerpt: d.excerpt, form: null, frameId: d.forms[0].frameId || 0, comment: null, identity: null };
+      addLog('publish', '页面已就绪，请在浮层中手动执行各步骤（获取标题与摘要 / 生成评论 / 识别表单 / 填写表单）', 'info', url);
       await this.notify(['publishRuntime', 'logs']);
       await this.overlayCall(tabId, 'setStep', 'detectForm');
       return;
     }
 
     // 以下为全自动模式的连续 AI 流程
+    // 先把（可能截断的）正文提炼成 AI 标题+摘要，相关性判断/评论生成/身份生成统一用摘要
+    const art = await this.summarize(url, d.title, d.excerpt);
+
     // AI 相关性预判：文章与目标网站搭不上边就直接跳过，不发评论
     if (task.siteIntro || task.mainKeyword) {
       try {
         const rel = await checkRelevance({
-          title: d.title, text: d.excerpt,
+          title: art.title, text: art.summary,
           siteIntro: task.siteIntro, mainKeyword: task.mainKeyword,
         });
         addLog('ai', `相关性判断：${rel.related ? '相关' : '不相关'}（${rel.reason}）`, rel.related ? 'info' : 'warn', url);
@@ -197,7 +262,8 @@ export class PublishRunner {
       }
     }
 
-    // AI 表单识别（失败时用默认 WordPress 选择器兜底）
+    // AI 表单识别（失败时用默认 WordPress 选择器兜底）；表单可能在 iframe 里，记住其 frameId 供填表/提交定向
+    const formFrameId = (d.forms[0] && d.forms[0].frameId) || 0;
     let form;
     try {
       form = await detectForm({ formHtml: d.forms[0].html, pageUrl: url });
@@ -212,14 +278,15 @@ export class PublishRunner {
     let comment;
     try {
       comment = await generateComment(
-        { url, title: d.title, text: d.excerpt },
+        { url, title: art.title, text: art.summary },
         {
           targetUrl: task.targetUrl || st.settings.identity.website,
           siteIntro: task.siteIntro || '',
           mainKeyword: task.mainKeyword || '',
+          articleLang: art.language,
         },
       );
-      addLog('ai', '评论生成完成（正文内嵌链接）', 'success', url);
+      addLog('ai', comment.includes('<a') ? '评论生成完成（正文内嵌链接）' : '评论生成完成（未带链接：AI 判断与文章无自然交集）', 'success', url);
     } catch (e) {
       return this.recordKeepTab(task, rt, url, 'fail', `评论生成失败：${e.message}`);
     }
@@ -227,30 +294,22 @@ export class PublishRunner {
     // 填表身份：昵称与邮箱由 AI 生成（失败退回设置里的静态身份）；website 留空
     let identity;
     try {
-      identity = await generateIdentity({ title: d.title, text: d.excerpt });
+      identity = await generateIdentity({ title: art.title, text: art.summary });
       addLog('ai', `身份生成：${identity.name} <${identity.email}>`, 'info', url);
     } catch (e) {
       addLog('ai', `身份生成失败，使用设置里的默认身份：${e.message}`, 'warn', url);
       identity = { name: st.settings.identity.name, email: st.settings.identity.email };
     }
     identity.website = ''; // 网址字段留空，链接只通过评论正文的 <a> 传递
-    const [fillRes] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: (cfg) => window.__BCM_PUB__ && window.__BCM_PUB__.fill(cfg),
-      args: [{ form, comment, identity, mode: task.mode, lang: st.settings.language, resourceUrl: url, refDomain }],
-    });
-    const f = fillRes && fillRes.result;
+    const f = await this.frameCall(tabId, formFrameId, 'fill',
+      { form, comment, identity, mode: task.mode, lang: st.settings.language, resourceUrl: url, refDomain });
     if (getState().publishRuntime !== rt) return;
     if (!f || !f.ok) {
       return this.recordKeepTab(task, rt, url, 'fail', `表单填写失败：${(f && f.error) || '未知错误'}`);
     }
     addLog('publish', `表单已填入（正文:${f.filled.comment ? '✓' : '✗'} 昵称:${f.filled.author ? '✓' : '✗'} 邮箱:${f.filled.email ? '✓' : '✗'} 网址:${f.filled.website ? '✓' : '✗'}）`, 'info', url);
 
-    const [subRes] = await chrome.scripting.executeScript({
-      target: { tabId },
-      func: () => window.__BCM_PUB__ && window.__BCM_PUB__.submit(),
-    });
-    const s = subRes && subRes.result;
+    const s = await this.frameCall(tabId, formFrameId, 'submit');
     if (s && s.ok) {
       await this.markPublished(task, url);
       this.record(task, url, 'success', '全自动已提交');
@@ -272,22 +331,25 @@ export class PublishRunner {
     const m = rt.manual || {};
 
     try {
-      if (step === 'detectForm') {
+      if (step === 'summarize') {
+        // 获取标题与摘要：AI 按设置里的 summaryLang 输出，同时识别文章语言；展示到浮层（可复制）
+        await this.overlayCall(tabId, 'setStatus', 'summarizing');
+        const art = await this.summarize(resourceUrl, m.title, m.excerpt);
+        rt.manual = { ...m, sumTitle: art.title, summary: art.summary, artLang: art.language };
+        await this.overlayCall(tabId, 'showSummary', { title: art.title, summary: art.summary, language: art.language });
+        await this.overlayCall(tabId, 'setStep', 'summarize');
+      } else if (step === 'detectForm') {
         await this.overlayCall(tabId, 'setStatus', 'detecting');
-        // 重新采集页面表单候选（标题/摘要一并刷新）
-        const [det] = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: (cfg) => window.__BCM_PUB__ && window.__BCM_PUB__.detect(cfg),
-          args: [{ selectors: PUBLISH_SELECTORS }],
-        });
-        const d = det && det.result;
+        // 重新采集页面表单候选（跨框架，标题/摘要一并刷新）；表单可能在 iframe 里，记住 frameId
+        const d = await this.detectAll(tabId).catch(() => null);
+        const frameId = (d && d.forms.length && d.forms[0].frameId) || 0;
         // 允许识别失败：表单留空也继续走「生成评论」，评论会展示在浮层上，可手动复制粘贴
         let form = null;
         if (d && d.ok && d.forms.length) {
           try {
             form = await detectForm({ formHtml: d.forms[0].html, pageUrl: resourceUrl });
             if (!form || !form.comment) throw new Error('未识别到评论文本框');
-            addLog('ai', `表单识别成功（留链方式：${form.linkMethod || 'website_field'}）`, 'success', resourceUrl);
+            addLog('ai', `表单识别成功${frameId ? '（在 iframe 中）' : ''}（留链方式：${form.linkMethod || 'website_field'}）`, 'success', resourceUrl);
           } catch (e) {
             addLog('ai', `表单识别失败，使用默认选择器兜底：${e.message}`, 'warn', resourceUrl);
             form = defaultForm();
@@ -295,32 +357,42 @@ export class PublishRunner {
         } else {
           addLog('publish', '页面上未找到评论表单，跳过表单识别（生成评论后可从浮层复制手动填写）', 'warn', resourceUrl);
         }
-        rt.manual = { ...m, title: (d && d.title) || m.title, excerpt: (d && d.excerpt) || m.excerpt, form };
-        // 滚动到识别出的表单并高亮，让人工确认 AI 的识别结果
-        if (form) await this.overlayCall(tabId, 'markForm', form);
+        rt.manual = { ...m, title: (d && d.title) || m.title, excerpt: (d && d.excerpt) || m.excerpt, form, frameId };
+        // 滚动到识别出的表单并高亮（在表单所在框架执行），让人工确认 AI 的识别结果
+        if (form) await this.frameCall(tabId, frameId, 'markForm', form);
         await this.overlayCall(tabId, 'setStep', 'genComment');
       } else if (step === 'genComment') {
         // 不依赖表单识别结果：识别失败也照常生成评论，展示在浮层上供手动复制
         await this.overlayCall(tabId, 'setStatus', 'generating');
+        // 标题与摘要优先复用「获取标题与摘要」的缓存；没点过则自动生成一次（同样缓存，
+        // 反复点「生成评论」换一条时不会重复总结）
+        const art = (m.summary != null && m.sumTitle != null)
+          ? { title: m.sumTitle, summary: m.summary, language: m.artLang || '' }
+          : await this.summarize(resourceUrl, m.title, m.excerpt);
+        if (m.summary == null) {
+          rt.manual = { ...m, sumTitle: art.title, summary: art.summary, artLang: art.language };
+          await this.overlayCall(tabId, 'showSummary', { title: art.title, summary: art.summary, language: art.language });
+        }
         const comment = await generateComment(
-          { url: resourceUrl, title: m.title, text: m.excerpt },
+          { url: resourceUrl, title: art.title, text: art.summary },
           {
             targetUrl: task.targetUrl || st.settings.identity.website,
             siteIntro: task.siteIntro || '',
             mainKeyword: task.mainKeyword || '',
+            articleLang: art.language,
           },
         );
-        addLog('ai', '评论生成完成（正文内嵌链接）', 'success', resourceUrl);
+        addLog('ai', comment.includes('<a') ? '评论生成完成（正文内嵌链接）' : '评论生成完成（未带链接：AI 判断与文章无自然交集）', 'success', resourceUrl);
         let identity;
         try {
-          identity = await generateIdentity({ title: m.title, text: m.excerpt });
+          identity = await generateIdentity({ title: art.title, text: art.summary });
           addLog('ai', `身份生成：${identity.name} <${identity.email}>`, 'info', resourceUrl);
         } catch (e) {
           addLog('ai', `身份生成失败，使用设置里的默认身份：${e.message}`, 'warn', resourceUrl);
           identity = { name: st.settings.identity.name, email: st.settings.identity.email };
         }
         identity.website = ''; // 网址字段留空，链接只通过评论正文的 <a> 传递
-        rt.manual = { ...m, comment, identity };
+        rt.manual = { ...rt.manual, sumTitle: art.title, summary: art.summary, artLang: art.language, comment, identity };
         // 评论与身份信息展示到浮层，每个字段带复制按钮
         await this.overlayCall(tabId, 'showComment', { comment, name: identity.name, email: identity.email });
         await this.overlayCall(tabId, 'setStep', 'fill');
@@ -329,12 +401,8 @@ export class PublishRunner {
         await this.overlayCall(tabId, 'setStatus', 'filling');
         // 表单识别失败时用默认选择器兜底；仍填不进去可重试，或从浮层复制评论手动粘贴
         const form = m.form || defaultForm();
-        const [fillRes] = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: (cfg) => window.__BCM_PUB__ && window.__BCM_PUB__.fill(cfg),
-          args: [{ form, comment: m.comment, identity: m.identity, mode: task.mode, lang: st.settings.language, resourceUrl, refDomain: rt.refDomain || '' }],
-        });
-        const f = fillRes && fillRes.result;
+        const f = await this.frameCall(tabId, m.frameId || 0, 'fill',
+          { form, comment: m.comment, identity: m.identity, mode: task.mode, lang: st.settings.language, resourceUrl, refDomain: rt.refDomain || '' });
         if (!f || !f.ok) throw new Error((f && f.error) || '未知错误');
         addLog('publish', `表单已填入（正文:${f.filled.comment ? '✓' : '✗'} 昵称:${f.filled.author ? '✓' : '✗'} 邮箱:${f.filled.email ? '✓' : '✗'} 网址:${f.filled.website ? '✓' : '✗'}）`, 'info', resourceUrl);
         // fill 成功后浮层已解锁 Submit / Skip，进入待确认阶段
@@ -363,11 +431,8 @@ export class PublishRunner {
 
     if (decision === 'submit') {
       try {
-        const [subRes] = await chrome.scripting.executeScript({
-          target: { tabId },
-          func: () => window.__BCM_PUB__ && window.__BCM_PUB__.submit(),
-        });
-        const s = subRes && subRes.result;
+        // 提交在表单所在框架执行（iframe 里的表单在对应框架提交）
+        const s = await this.frameCall(tabId, (rt.manual && rt.manual.frameId) || 0, 'submit');
         if (s && s.ok) {
           await this.markPublished(task, resourceUrl);
           this.record(task, resourceUrl, 'success', '人工确认，已提交');
@@ -383,7 +448,8 @@ export class PublishRunner {
     }
 
     try {
-      await chrome.scripting.executeScript({ target: { tabId }, func: () => window.__BCM_PUB__ && window.__BCM_PUB__.cleanup() });
+      // 浮层在主框架，表单高亮可能在 iframe 里：全框架清理
+      await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: () => window.__BCM_PUB__ && window.__BCM_PUB__.cleanup() });
     } catch { /* tab may be gone */ }
 
     rt.stage = 'working';
@@ -439,10 +505,10 @@ export class PublishRunner {
     if (task.status === 'running') {
       const st = getState();
       if (st.publishRuntime && st.publishRuntime.taskId === taskId) {
-        // 若停在待审核，先清掉浮层
+        // 若停在待审核，先清掉浮层（全框架：表单高亮可能在 iframe 里）
         try {
           if (st.publishRuntime.tabId) {
-            await chrome.scripting.executeScript({ target: { tabId: st.publishRuntime.tabId }, func: () => window.__BCM_PUB__ && window.__BCM_PUB__.cleanup() });
+            await chrome.scripting.executeScript({ target: { tabId: st.publishRuntime.tabId, allFrames: true }, func: () => window.__BCM_PUB__ && window.__BCM_PUB__.cleanup() });
           }
         } catch { /* ignore */ }
         try { if (st.publishRuntime.tabId) await chrome.tabs.remove(st.publishRuntime.tabId).catch(() => {}); } catch { /* ignore */ }

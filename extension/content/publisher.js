@@ -22,13 +22,16 @@
   const I18N = {
     zh: {
       title: '评论发布助手',
-      manual: '页面已打开。「AI 生成评论」与「AI 识别评论表单」互不依赖，可任意顺序执行；评论不满意可再点一次重新生成，满意后点「自动填写表单」。',
+      manual: '页面已打开。「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」互不依赖，可任意顺序执行；评论不满意可再点一次重新生成，满意后点「自动填写表单」。',
       detecting: '正在识别评论表单…',
+      summarizing: 'AI 正在生成标题与摘要…',
       generating: 'AI 正在生成评论…',
       filling: '正在自动填写表单…',
       formDone: '表单识别完成，已高亮目标表单。',
+      sumDone: '标题与摘要已生成，显示在下方，可复制。',
       commentDone: '评论已生成。不满意可再点「AI 生成评论」换一条，满意后点「自动填写表单」。',
       ready: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。',
+      stepSummarize: '获取标题与摘要',
       stepDetect: 'AI 识别评论表单',
       stepGen: 'AI 生成评论',
       stepFill: '自动填写表单',
@@ -40,6 +43,9 @@
       fieldComment: '评论内容',
       fieldName: '昵称',
       fieldEmail: '邮箱',
+      fieldTitle: '标题',
+      fieldSummary: '摘要',
+      fieldLang: '文章语言',
       copy: '复制',
       copied: '已复制 ✓',
       minimize: '最小化',
@@ -47,13 +53,16 @@
     },
     en: {
       title: 'Comment Assistant',
-      manual: 'Page opened. "AI generate comment" and "AI detect form" are independent — run them in any order. Not happy with the comment? Click again for a new one, then "Auto fill form".',
+      manual: 'Page opened. "Get title & summary", "AI generate comment" and "AI detect form" are independent — run them in any order. Not happy with the comment? Click again for a new one, then "Auto fill form".',
       detecting: 'Detecting the comment form…',
+      summarizing: 'AI is generating the title & summary…',
       generating: 'AI is generating the comment…',
       filling: 'Filling the comment form…',
       formDone: 'Form detected and highlighted on the page.',
+      sumDone: 'Title & summary generated below — copyable.',
       commentDone: 'Comment generated. Click "AI generate comment" again for a new one, or "Auto fill form" to continue.',
       ready: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.',
+      stepSummarize: 'Get title & summary',
       stepDetect: 'AI detect form',
       stepGen: 'AI generate comment',
       stepFill: 'Auto fill form',
@@ -65,6 +74,9 @@
       fieldComment: 'Comment',
       fieldName: 'Name',
       fieldEmail: 'Email',
+      fieldTitle: 'Title',
+      fieldSummary: 'Summary',
+      fieldLang: 'Article language',
       copy: 'Copy',
       copied: 'Copied ✓',
       minimize: 'Minimize',
@@ -99,15 +111,25 @@
     el.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
+  /** 是否属于本插件浮层（避免把浮层自己的输入框/按钮当成页面表单元素） */
+  function isOurs(el) {
+    return !!(el && el.closest && el.closest('#' + OVERLAY_ID + ', #' + BALL_ID));
+  }
+
+  // 裸按钮兜底：很多简易评论框用不带 type 属性的 <button>（属性选择器匹配不到），按文案识别
+  const SUBMIT_HINT = /post|submit|comment|reply|send|发表|提交|发布|评论/i;
+
   function findSubmitIn(scope, submitSel) {
-    const bySel = submitSel ? q(submitSel, scope) : null;
-    if (bySel) return bySel;
-    return (
-      q('input[type="submit"]', scope) ||
-      q('button[type="submit"]', scope) ||
-      qa('input[type="submit"], button[type="submit"], .submit, #submit').find((el) => true) ||
-      null
-    );
+    for (const sc of [...new Set([scope, document].filter(Boolean))]) {
+      const bySel = submitSel ? q(submitSel, sc) : null;
+      if (bySel && !isOurs(bySel)) return bySel;
+      const explicit = qa('input[type="submit"], button[type="submit"], .submit, #submit', sc).find((el) => !isOurs(el));
+      if (explicit) return explicit;
+      const byText = qa('button, input[type="button"]', sc)
+        .find((el) => !isOurs(el) && SUBMIT_HINT.test(((el.value || '') + ' ' + (el.textContent || '')).trim()));
+      if (byText) return byText;
+    }
+    return null;
   }
 
   // ---------- detect：采集表单候选与页面信息 ----------
@@ -130,11 +152,12 @@
         loginRequired = ['log in to leave a comment', 'must be logged in', '请登录后发表评论'].some((h) => hay.includes(h));
       }
 
-      // 表单候选：包含 textarea 的 form（兼容无 form 包裹的评论组件）
+      // 表单候选：包含 textarea 的 form（兼容无 form 包裹的评论组件）；跳过浮层自身的 UI
       const forms = [];
       const seen = new Set();
-      const candidates = [...document.querySelectorAll('form')].filter((f) => f.querySelector('textarea'));
+      const candidates = [...document.querySelectorAll('form')].filter((f) => f.querySelector('textarea') && !isOurs(f));
       for (const textarea of document.querySelectorAll('textarea')) {
+        if (isOurs(textarea)) continue; // 浮层里的评论展示框不是页面表单
         if (!textarea.closest('form') && textarea.offsetParent) candidates.push(textarea.closest('div') || textarea);
       }
       for (const f of candidates) {
@@ -168,7 +191,7 @@
       const pick = (sel) => {
         for (const sc of scopes) {
           const el = sel ? q(sel, sc) : null;
-          if (el) return el;
+          if (el && !isOurs(el)) return el; // 浮层自己的输入框不算
         }
         return null;
       };
@@ -334,6 +357,41 @@
     setTimeout(() => { btn.textContent = old; }, 1200);
   }
 
+  /** 字段展示行：label + 复制按钮 + 只读输入框/文本域（showSummary / showComment 共用），rows 控制多行高度 */
+  function addFieldRow(box, label, val, multi, rows) {
+    const s = strings();
+    const rowEl = document.createElement('div');
+    const lab = document.createElement('div');
+    lab.textContent = label;
+    lab.style.cssText = 'color:#9ca3af;font-size:11px;margin-bottom:2px;display:flex;justify-content:space-between;align-items:center;';
+    const btn = document.createElement('button');
+    btn.textContent = s.copy;
+    btn.style.cssText = 'padding:1px 8px;border:1px solid #4a9eff;border-radius:6px;background:transparent;color:#4a9eff;font-size:11px;cursor:pointer;flex-shrink:0;';
+    btn.addEventListener('click', () => copyText(val, btn));
+    lab.appendChild(btn);
+    const input = document.createElement(multi ? 'textarea' : 'input');
+    if (!multi) input.type = 'text';
+    input.readOnly = true;
+    input.value = val;
+    if (multi) input.rows = rows || 4;
+    input.style.cssText = 'width:100%;box-sizing:border-box;background:#111420;border:1px solid #2d3450;border-radius:6px;color:#e5e7eb;font-size:12px;padding:5px 7px;resize:vertical;';
+    rowEl.appendChild(lab);
+    rowEl.appendChild(input);
+    box.appendChild(rowEl);
+  }
+
+  /** 「获取标题与摘要」完成后：在浮层展示标题、摘要与文章语言（各带复制按钮） */
+  function showSummary(fields) {
+    if (!overlayEls || !overlayEls.summaryBox || !fields) return;
+    const s = strings();
+    const box = overlayEls.summaryBox;
+    box.innerHTML = '';
+    if (fields.title) addFieldRow(box, s.fieldTitle, fields.title, false);
+    if (fields.summary) addFieldRow(box, s.fieldSummary, fields.summary, true, 8);
+    if (fields.language) addFieldRow(box, s.fieldLang, fields.language, false);
+    box.style.display = (fields.title || fields.summary || fields.language) ? 'flex' : 'none';
+  }
+
   /** 评论生成后：在浮层展示各字段内容，每个字段带复制按钮（识别/填表失败时可手动粘贴） */
   function showComment(fields) {
     if (!overlayEls || !overlayEls.fieldsBox || !fields) return;
@@ -348,24 +406,7 @@
     for (const [key, label, multi] of defs) {
       const val = fields[key];
       if (!val) continue;
-      const rowEl = document.createElement('div');
-      const lab = document.createElement('div');
-      lab.textContent = label;
-      lab.style.cssText = 'color:#9ca3af;font-size:11px;margin-bottom:2px;display:flex;justify-content:space-between;align-items:center;';
-      const btn = document.createElement('button');
-      btn.textContent = s.copy;
-      btn.style.cssText = 'padding:1px 8px;border:1px solid #4a9eff;border-radius:6px;background:transparent;color:#4a9eff;font-size:11px;cursor:pointer;flex-shrink:0;';
-      btn.addEventListener('click', () => copyText(val, btn));
-      lab.appendChild(btn);
-      const input = document.createElement(multi ? 'textarea' : 'input');
-      if (!multi) input.type = 'text';
-      input.readOnly = true;
-      input.value = val;
-      if (multi) input.rows = 4;
-      input.style.cssText = 'width:100%;box-sizing:border-box;background:#111420;border:1px solid #2d3450;border-radius:6px;color:#e5e7eb;font-size:12px;padding:5px 7px;resize:vertical;';
-      rowEl.appendChild(lab);
-      rowEl.appendChild(input);
-      box.appendChild(rowEl);
+      addFieldRow(box, label, val, multi);
     }
     box.style.display = 'flex';
   }
@@ -410,7 +451,8 @@
     const wrap = document.createElement('div');
     wrap.id = OVERLAY_ID;
     wrap.style.cssText = [
-      'position:fixed', 'right:16px', 'bottom:16px', 'width:320px', 'z-index:2147483647',
+      'position:fixed', 'right:16px', 'bottom:16px', 'width:440px', 'z-index:2147483647',
+      'max-height:85vh', 'overflow-y:auto', 'overscroll-behavior:contain',
       'background:#1c1f2e', 'border-radius:12px', 'padding:16px', 'box-sizing:border-box',
       'box-shadow:0 8px 32px rgba(0,0,0,.45)', 'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif',
     ].join(';');
@@ -452,11 +494,16 @@
       return b;
     };
     const steps = {
+      summarize: mkStep('summarize', s.stepSummarize),
       genComment: mkStep('genComment', s.stepGen),
       detectForm: mkStep('detectForm', s.stepDetect),
       fill: mkStep('fill', s.stepFill),
     };
     for (const b of Object.values(steps)) stepCol.appendChild(b);
+
+    // 标题与摘要展示区：「获取标题与摘要」后由 showSummary 填充（各字段带复制按钮）
+    const summaryBox = document.createElement('div');
+    summaryBox.style.cssText = 'display:none;flex-direction:column;gap:8px;margin-bottom:10px;';
 
     // 评论字段展示区：生成评论后由 showComment 填充（每字段带复制按钮）
     const fieldsBox = document.createElement('div');
@@ -503,26 +550,28 @@
     wrap.appendChild(header);
     wrap.appendChild(status);
     wrap.appendChild(stepCol);
+    wrap.appendChild(summaryBox);
     wrap.appendChild(fieldsBox);
     wrap.appendChild(locateBtn);
     wrap.appendChild(row);
     document.documentElement.appendChild(wrap);
-    overlayEls = { status, skipBtn, submitBtn, steps, fieldsBox };
+    overlayEls = { status, skipBtn, submitBtn, steps, fieldsBox, summaryBox };
     setStep('detectForm');
   }
 
   /**
-   * 切换可点的步骤按钮，并更新状态文案；key ∈ detectForm/genComment/fill/done。
-   * 「AI 生成评论」与「AI 识别评论表单」互不依赖，可同时点击；
-   * 「AI 生成评论」可反复执行（点一次生成一条新的，不满意就再点），进入填写阶段后仍保持可点；
+   * 切换可点的步骤按钮，并更新状态文案；key ∈ summarize/genComment/detectForm/fill/done。
+   * 「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」互不依赖，可同时点击；
+   * 「获取标题与摘要」「AI 生成评论」可反复执行（点一次生成一份新的，不满意就再点），进入填写阶段后仍保持可点；
    * 「自动填写表单」需评论已生成，由后台推进到 fill 时才解锁。
    */
   function setStep(key) {
     if (!overlayEls || !overlayEls.steps) return;
     const enabled = {
-      detectForm: ['detectForm', 'genComment'],
-      genComment: ['detectForm', 'genComment'],
-      fill: ['genComment', 'fill'],
+      summarize: ['summarize', 'genComment', 'detectForm'],
+      genComment: ['summarize', 'genComment', 'detectForm'],
+      detectForm: ['summarize', 'genComment', 'detectForm'],
+      fill: ['summarize', 'genComment', 'fill'],
       done: [],
     }[key] || [];
     for (const [k, b] of Object.entries(overlayEls.steps)) {
@@ -532,7 +581,7 @@
       b.style.cursor = on ? 'pointer' : 'not-allowed';
     }
     const s = strings();
-    const msg = { detectForm: s.manual, genComment: s.formDone, fill: s.commentDone }[key];
+    const msg = { summarize: s.sumDone, detectForm: s.manual, genComment: s.formDone, fill: s.commentDone }[key];
     if (msg) setStatus(msg);
   }
 
@@ -575,5 +624,5 @@
     }
   }
 
-  window.__BCM_PUB__ = { detect, fill, submit, cleanup, showOverlay, setStatus, setStep, markForm, showComment };
+  window.__BCM_PUB__ = { detect, fill, submit, cleanup, showOverlay, setStatus, setStep, markForm, showComment, showSummary };
 })();

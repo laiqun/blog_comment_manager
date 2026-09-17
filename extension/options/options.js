@@ -31,6 +31,7 @@ function saveSettings() {
           identity: settings.identity,
           publishMode: settings.publishMode,
           language: settings.language,
+          summaryLang: settings.summaryLang,
         },
       });
       flash.classList.add('show');
@@ -101,6 +102,9 @@ async function init() {
   // 发布设置 + 语言
   $('#publish-mode').value = settings.publishMode || 'semi';
   $('#publish-mode').addEventListener('change', (e) => { settings.publishMode = e.target.value; saveSettings(); });
+
+  $('#summary-lang').value = settings.summaryLang || 'zh';
+  $('#summary-lang').addEventListener('change', (e) => { settings.summaryLang = e.target.value; saveSettings(); });
 
   $('#lang-select').addEventListener('change', (e) => {
     settings.language = e.target.value;
