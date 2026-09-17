@@ -232,18 +232,18 @@ async function handleMessage(msg, sender) {
       return { ok: true, snapshot: await snapshot() };
     }
 
-    // 资源库：直接读 IndexedDB analysis 表，筛选「命中，可发布」的记录（不经内存态）
+    // 资源库：直接读 IndexedDB analysis 表，取命中结论（ready/captcha，验证码资源也算命中）的记录（不经内存态）
     case 'getLibraryResources': {
       const rows = await idbGetAll('analysis').catch(() => []);
       const resources = rows
-        .filter((r) => r && r.url && r.reason === '命中，可发布')
+        .filter((r) => r && r.url && VALID_STATUSES.includes(r.status))
         .sort((a, b) => (b.checkedAt || 0) - (a.checkedAt || 0)) // 新命中的在前
         .map((r) => ({
           url: r.url,
           domain: domainOf(r.url),
           targetDomain: r.targetDomain,
           type: 'blog_comment',
-          status: 'ready',
+          status: r.status,
           checkedAt: r.checkedAt,
         }));
       return { ok: true, resources };

@@ -116,10 +116,10 @@ test('getSnapshot：resources 直接读 IndexedDB（不经内存态），按 add
   assert.equal('resources' in getState(), false); // 内存态不存资源
 });
 
-test('getLibraryResources：只取 analysis 表中 reason=命中，可发布 的记录', async () => {
+test('getLibraryResources：取 analysis 表中命中结论（ready/captcha）的记录', async () => {
   const res = await sendMsg({ type: 'getLibraryResources' });
   assert.equal(res.ok, true);
-  assert.deepEqual(res.resources.map((r) => r.url), ['https://a.com/1']); // captcha / invalid 不入选
+  assert.deepEqual(res.resources.map((r) => r.url), ['https://a.com/1', 'https://a.com/2']); // invalid 不入选，captcha 也算命中
   const row = res.resources[0];
   assert.equal(row.domain, 'a.com');
   assert.equal(row.targetDomain, 'example.com');
@@ -134,7 +134,8 @@ test('deleteLibraryRow：删掉 analysis 记录与同 url 资源，资源库不�
   const res = await sendMsg({ type: 'deleteLibraryRow', targetDomain: 'example.com', url: 'https://a.com/1' });
   assert.equal(res.ok, true);
   const lib = await sendMsg({ type: 'getLibraryResources' });
-  assert.equal(lib.resources.length, 0);
+  assert.equal(lib.resources.length, 1); // 只删掉被删的那条，captcha 命中的 a.com/2 仍在库中
+  assert.equal(lib.resources.some((r) => r.url === 'https://a.com/1'), false);
   assert.equal(res.snapshot.resources.some((r) => r.url === 'https://a.com/1'), false); // 资源表同 url 记录一并清除
 });
 

@@ -183,7 +183,7 @@ function renderLogs() {
 }
 
 /* ---- 资源库 ---- */
-// 点击「资源库」Tab 时：读 IndexedDB analysis 表（reason=命中，可发布）
+// 点击「资源库」Tab 时：读 IndexedDB analysis 表（命中结论 ready/captcha，验证码资源也算命中）
 async function loadLibrary() {
   try {
     const res = await send({ type: 'getLibraryResources' });
