@@ -172,8 +172,12 @@ export class CollectController {
         const delay = pageDelayMinMs + Math.random() * (pageDelayMaxMs - pageDelayMinMs);
         addLog('collect', `${(delay / 1000).toFixed(1)}s 后翻到第 ${page + 1} 页`, 'info');
         await this.notify(['logs']);
-        await sleep(delay);
-        if (cs.status !== 'running' || cs.mode !== 'collect') return;
+        // 长等待拆成小段轮询停止标志：停止响应延迟从最坏 delay 秒降到 ≤0.3s
+        const deadline = Date.now() + delay;
+        while (Date.now() < deadline) {
+          if (cs.status !== 'running' || cs.mode !== 'collect') return;
+          await sleep(Math.min(300, deadline - Date.now()));
+        }
 
         const firstBefore = (rows[0] && rows[0].url) || '';
         await this.clickNext(tabId);
