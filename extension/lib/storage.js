@@ -98,7 +98,7 @@ export async function clearAll() {
   state.activeTaskId = null;
   state.publishRuntime = null;
   state.logs = [];
-  for (const s of ['backlinks', 'analysis', 'published']) idbClear(s).catch(() => {});
+  for (const s of ['backlinks', 'analysis', 'published', 'templates']) idbClear(s).catch(() => {});
 }
 
 // ---------- 日志 ----------

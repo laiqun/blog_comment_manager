@@ -225,10 +225,23 @@ function renderLibrary() {
   $('#res-empty').style.display = rs.length ? 'none' : '';
   // 最多渲染 200 条，避免 popup 卡顿
   const view = rs.slice(0, 200);
-  list.innerHTML = view.map((r) => {
-    const fav = `<img class="fav" src="${chrome.runtime.getURL('/_favicon/?pageUrl=' + encodeURIComponent(r.url) + '&clientId=bcm')}" onerror="this.style.display='none'">`;
-    const short = r.domain + (r.url.replace(/^https?:\/\/[^/]+/, '').length > 1 ? r.url.replace(/^https?:\/\/[^/]+/, '') : '');
-    return `
+  // 按目标域名分组（组间按域名字典序排列）
+  const groups = new Map();
+  for (const r of view) {
+    const key = r.targetDomain || '';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const sortedGroups = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  list.innerHTML = sortedGroups.map(([td, rows]) => `
+      <div class="res-group-head">
+        <span class="g-domain">${esc(td || '—')}</span>
+        <span class="g-count">${rows.length}</span>
+      </div>
+      ${rows.map((r) => {
+        const fav = `<img class="fav" src="${chrome.runtime.getURL('/_favicon/?pageUrl=' + encodeURIComponent(r.url) + '&clientId=bcm')}" onerror="this.style.display='none'">`;
+        const short = r.domain + (r.url.replace(/^https?:\/\/[^/]+/, '').length > 1 ? r.url.replace(/^https?:\/\/[^/]+/, '') : '');
+        return `
       <div class="res-item${r.enabled === false ? ' disabled' : ''}">
         ${fav}
         <span class="badge type">${t(r.type === 'profile' ? 'type_profile' : 'type_blog_comment')}</span>
@@ -240,7 +253,7 @@ function renderLibrary() {
           <button class="icon-btn" data-ract="publish" data-url="${esc(r.url)}" title="${t('resPublish')}">↗</button>
         </span>
       </div>`;
-  }).join('');
+      }).join('')}`).join('');
 }
 
 // ================= 弹窗 =================
@@ -254,18 +267,26 @@ function closeModal() {
   $('#modal').innerHTML = '';
 }
 
-function showCreateTaskModal(prefill = null) {
+function showCreateTaskModal(prefill = null, singleRes = null) {
   const readyCount = (snap.resources || []).filter((r) => r.status === 'ready' && r.enabled !== false).length;
   const isEdit = !!prefill;
-  if (!isEdit && readyCount === 0) {
+  if (!isEdit && !singleRes && readyCount === 0) {
     toast(t('noReadyResources'), 'error');
     return;
   }
   openModal(`
-    <h3>${t(isEdit ? 'titleEditTask' : 'titleCreateTask')}</h3>
+    <h3>${t(isEdit ? 'titleEditTask' : singleRes ? 'resPublish' : 'titleCreateTask')}</h3>
+    <div class="form-row">
+      <label class="field-label">${t('tplLabel')}</label>
+      <div class="tpl-row">
+        <select id="m-tpl"><option value="">${t('tplSelect')}</option></select>
+        <button class="btn btn-ghost btn-sm" id="m-tpl-save">${t('tplSave')}</button>
+        <button class="btn btn-ghost btn-sm" id="m-tpl-del" disabled>${t('delete')}</button>
+      </div>
+    </div>
     <div class="form-row">
       <label class="field-label">${t('taskName')}</label>
-      <input type="text" id="m-name" value="${esc(prefill?.name || '')}" placeholder="Canva" />
+      <input type="text" id="m-name" value="${esc(prefill?.name || singleRes?.domain || '')}" placeholder="Canva" />
     </div>
     <div class="form-row">
       <label class="field-label">${t('targetUrl')}</label>
@@ -286,7 +307,11 @@ function showCreateTaskModal(prefill = null) {
         <label><input type="radio" name="m-mode" value="auto" ${prefill?.mode === 'auto' ? 'checked' : ''} /> ${t('modeAuto')}</label>
       </div>
     </div>
-    ${isEdit ? '' : `
+    ${isEdit ? '' : singleRes ? `
+    <div class="form-row">
+      <label class="field-label">${t('resourceScope')}</label>
+      <select id="m-scope" disabled><option>${t('scopeSingle')}：${esc(singleRes.url)}</option></select>
+    </div>` : `
     <div class="form-row">
       <label class="field-label">${t('resourceScope')}</label>
       <select id="m-scope" disabled><option>${t('scopeReady')} (${readyCount})</option></select>
@@ -297,6 +322,57 @@ function showCreateTaskModal(prefill = null) {
     </div>
   `);
   $('#m-cancel').addEventListener('click', closeModal);
+
+  // ---- 任务模板（存 IndexedDB）：选择填充 / 存为模板（同名覆盖即编辑）/ 删除 ----
+  const tplSel = $('#m-tpl');
+  const tplDelBtn = $('#m-tpl-del');
+  let templates = [];
+  const fillTplOptions = (list, selected) => {
+    templates = list || [];
+    tplSel.innerHTML = `<option value="">${t('tplSelect')}</option>` +
+      templates.map((x) => `<option value="${esc(x.name)}" ${x.name === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+    tplDelBtn.disabled = !tplSel.value;
+  };
+  send({ type: 'getTemplates' })
+    .then((res) => { if (res && res.templates) fillTplOptions(res.templates); })
+    .catch(() => {});
+  tplSel.addEventListener('change', () => {
+    tplDelBtn.disabled = !tplSel.value;
+    const tpl = templates.find((x) => x.name === tplSel.value);
+    if (!tpl) return;
+    $('#m-name').value = tpl.name || '';
+    $('#m-url').value = tpl.targetUrl || '';
+    $('#m-intro').value = tpl.siteIntro || '';
+    $('#m-keyword').value = tpl.mainKeyword || '';
+    const radio = document.querySelector(`input[name="m-mode"][value="${tpl.mode === 'auto' ? 'auto' : 'semi'}"]`);
+    if (radio) radio.checked = true;
+  });
+  $('#m-tpl-save').addEventListener('click', async () => {
+    const input = prompt(t('tplNamePrompt'), $('#m-name').value.trim() || tplSel.value);
+    const tplName = (input || '').trim();
+    if (!tplName) return;
+    if (templates.some((x) => x.name === tplName) && !confirm(t('tplOverwrite', { name: tplName }))) return;
+    const res = await send({
+      type: 'saveTemplate',
+      name: tplName,
+      targetUrl: $('#m-url').value.trim(),
+      siteIntro: $('#m-intro').value.trim(),
+      mainKeyword: $('#m-keyword').value.trim(),
+      mode: document.querySelector('input[name="m-mode"]:checked').value,
+    });
+    if (res && res.ok === false) return toast(res.error, 'error');
+    if (res && res.templates) fillTplOptions(res.templates, tplName);
+    toast(t('tplSaved'), 'success');
+  });
+  tplDelBtn.addEventListener('click', async () => {
+    const tplName = tplSel.value;
+    if (!tplName) return;
+    if (!confirm(`${t('delete')}「${tplName}」?`)) return;
+    const res = await send({ type: 'deleteTemplate', name: tplName });
+    if (res && res.templates) fillTplOptions(res.templates);
+    toast(t('tplDeleted'), 'success');
+  });
+
   $('#m-ok').addEventListener('click', async () => {
     const name = $('#m-name').value.trim() || '未命名任务';
     const targetUrl = $('#m-url').value.trim();
@@ -305,6 +381,11 @@ function showCreateTaskModal(prefill = null) {
     const mode = document.querySelector('input[name="m-mode"]:checked').value;
     if (isEdit) {
       await act({ type: 'updateTask', id: prefill.id, name, targetUrl, siteIntro, mainKeyword, mode });
+    } else if (singleRes) {
+      // 单条立即发布：资源范围锁定为这一条
+      closeModal();
+      await act({ type: 'publishOne', url: singleRes.url, name, targetUrl, siteIntro, mainKeyword, mode });
+      return;
     } else {
       const urls = (snap.resources || []).filter((r) => r.status === 'ready' && r.enabled !== false).map((r) => r.url);
       if (!urls.length) return toast(t('noReadyResources'), 'error');
@@ -446,7 +527,7 @@ function bindEvents() {
     const res = (libraryRows || []).find((r) => r.url === url);
     if (!res) return;
     if (btn.dataset.ract === 'open') chrome.tabs.create({ url: res.url });
-    if (btn.dataset.ract === 'publish') await act({ type: 'publishOne', url: res.url });
+    if (btn.dataset.ract === 'publish') showCreateTaskModal(null, res);
   });
 
   // 资源启用/停用（行内 checkbox）

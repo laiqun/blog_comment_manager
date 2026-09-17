@@ -70,6 +70,24 @@ test('testKey：401 返回 ok:false，200 返回 ok:true', async () => {
   assert.equal(good.label, 'my-key');
 });
 
+test('chat 请求体带低强度 reasoning（防思考模型吃光 max_tokens）', async () => {
+  let captured;
+  globalThis.fetch = async (url, init) => {
+    captured = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'ok' } }] }) };
+  };
+  await chat('classify', [{ role: 'user', content: 'hi' }]);
+  assert.equal(captured.reasoning?.effort, 'low');
+});
+
+test('content 为空且 finish_reason=length 时报错提示思考占用额度', async () => {
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    json: async () => ({ choices: [{ finish_reason: 'length', message: { content: null, reasoning: '...' } }] }),
+  });
+  await assert.rejects(chat('classify', [{ role: 'user', content: 'hi' }]), /截断/);
+});
+
 test('buildCommentWithLink：占位符替换、href 右引号前换行、无占位符时追加', async () => {
   const { buildCommentWithLink } = await import('../extension/lib/openrouter.js');
   // 占位符替换

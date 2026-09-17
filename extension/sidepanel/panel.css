@@ -201,6 +201,16 @@ input::placeholder { color: var(--text-faint); }
 .count-row input { accent-color: var(--blue); cursor: pointer; }
 
 .res-list { display: flex; flex-direction: column; gap: 6px; }
+.res-group-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 2px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.res-group-head .g-domain { font-weight: 600; color: var(--text); }
+.res-group-head .g-count { font-size: 11px; }
 .res-item {
   background: var(--card);
   border-radius: 8px;
@@ -285,6 +295,9 @@ input::placeholder { color: var(--text-faint); }
 #modal .mode-row { display: flex; flex-direction: column; gap: 6px; }
 #modal .mode-row label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 12.5px; cursor: pointer; }
 #modal .btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+#modal .tpl-row { display: flex; gap: 6px; }
+#modal .tpl-row select { flex: 1; min-width: 0; }
+#modal .tpl-row .btn { flex-shrink: 0; }
 
 .detail-item {
   display: flex;

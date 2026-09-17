@@ -6,7 +6,7 @@ import {
   findTask, taskCounts, uid, domainOf,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
-import { idbGet, idbGetDomain, idbGetAll, idbPutAll } from '../lib/idb.js';
+import { idbGet, idbGetDomain, idbGetAll, idbPut, idbPutAll, idbDelete } from '../lib/idb.js';
 import { CollectController } from './collect.js';
 import { PublishRunner } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
@@ -314,14 +314,17 @@ async function handleMessage(msg, sender) {
     }
 
     case 'publishOne': {
-      // 单条立即发布：包装成一个临时任务（资源直接用页面 URL，来自 analysis 表命中记录）
+      // 单条立即发布：包装成一个临时任务，资源锁定为这一条（来自 analysis 表命中记录）；
+      // 任务名称/目标地址/网站介绍/主关键词由弹窗传入，与新建任务一致
       const st = getState();
       if (!msg.url) return { ok: false, error: '资源不存在' };
       const task = {
         id: uid(),
-        name: '单条发布',
-        targetUrl: st.settings.identity.website || '',
-        mode: st.settings.publishMode || 'semi',
+        name: (msg.name || '').trim() || '单条发布',
+        targetUrl: (msg.targetUrl || '').trim() || st.settings.identity.website || '',
+        siteIntro: (msg.siteIntro || '').trim(),
+        mainKeyword: (msg.mainKeyword || '').trim(),
+        mode: msg.mode === 'auto' ? 'auto' : msg.mode === 'semi' ? 'semi' : (st.settings.publishMode || 'semi'),
         resourceUrls: [msg.url],
         status: 'idle',
         results: {},
@@ -329,14 +332,51 @@ async function handleMessage(msg, sender) {
         finishedAt: 0,
       };
       st.tasks.unshift(task);
-      await save('tasks');
+      addLog('publish', `创建任务「${task.name}」，绑定 1 条资源`, 'info');
+      await save('tasks', 'logs');
       await publish.startTask(task.id);
       ensureAlarm(true);
       return { ok: true, snapshot: await snapshot() };
     }
 
-    case 'clearData': {
-      await collect.stop().catch(() => {});
+    // ---- 任务模板（存 IndexedDB templates 表，主键 name）----
+    case 'getTemplates': {
+      const templates = await idbGetAll('templates').catch(() => []);
+      templates.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      return { ok: true, templates };
+    }
+
+    case 'saveTemplate': {
+      const name = (msg.name || '').trim();
+      if (!name) return { ok: false, error: '模板名称不能为空' };
+      const tpl = {
+        name,
+        targetUrl: (msg.targetUrl || '').trim(),
+        siteIntro: (msg.siteIntro || '').trim(),
+        mainKeyword: (msg.mainKeyword || '').trim(),
+        mode: msg.mode === 'auto' ? 'auto' : 'semi',
+        updatedAt: Date.now(),
+      };
+      await idbPut('templates', tpl);
+      addLog('system', `任务模板已保存：${name}`, 'info');
+      await save('logs');
+      const templates = await idbGetAll('templates').catch(() => []);
+      templates.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      return { ok: true, templates };
+    }
+
+    case 'deleteTemplate': {
+      const name = (msg.name || '').trim();
+      if (!name) return { ok: false, error: '模板不存在' };
+      await idbDelete('templates', name);
+      addLog('system', `任务模板已删除：${name}`, 'info');
+      await save('logs');
+      const templates = await idbGetAll('templates').catch(() => []);
+      templates.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+      return { ok: true, templates };
+    }
+
+    case 'clearData': {      await collect.stop().catch(() => {});
       await clearAll();
       ensureAlarm(false);
       broadcast();
@@ -396,6 +436,12 @@ async function handleMessage(msg, sender) {
 
     case 'pub:decision': {
       await publish.onDecision(msg.resourceUrl, msg.decision);
+      return { ok: true };
+    }
+
+    case 'pub:step': {
+      // 半自动浮层的步骤按钮：识别表单 / 生成评论 / 填写表单
+      await publish.onStep(msg.resourceUrl, msg.step);
       return { ok: true };
     }
 

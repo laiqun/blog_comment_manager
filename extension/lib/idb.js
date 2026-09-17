@@ -1,17 +1,20 @@
 /**
  * IndexedDB 轻量封装：持久存储（Service Worker 中可用）。
- * 库 bcm-idb（v2）；stores：
+ * 库 bcm-idb（v3）；stores：
  *  - backlinks：已发现外链，主键 [targetDomain, url]（按域名归档、同域 url 去重、覆盖写）
  *  - analysis ：分析结论 + 可用资源（含 enabled 启停标记），主键 [targetDomain, url]
  *  - published：已发过的外链 {url, targetUrl, taskId, publishedAt}，主键 [url, targetUrl]
+ *  - templates：发布任务模板 {name, targetUrl, siteIntro, mainKeyword, mode, updatedAt}，主键 name
  * v1 → v2：resources 表废弃（可用资源复用 analysis 表），其中已发布记录迁入 published 后删表
+ * v2 → v3：新增 templates 表
  */
 const DB_NAME = 'bcm-idb';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const STORE_META = [
   ['backlinks', ['targetDomain', 'url']],
   ['analysis', ['targetDomain', 'url']],
   ['published', ['url', 'targetUrl']],
+  ['templates', 'name'],
 ];
 let dbPromise = null;
 

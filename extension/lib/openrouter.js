@@ -29,6 +29,8 @@ export async function chat(role, messages, { maxTokens = 1000, temperature = 0.4
     messages,
     max_tokens: maxTokens,
     temperature,
+    // 压低思考模型的推理强度：GLM 这类模型默认思考很长，会把 max_tokens 吃光导致 content 为空
+    reasoning: { effort: LIMITS.aiReasoningEffort },
   };
   if (json) body.response_format = { type: 'json_object' };
   const res = await fetch(`${API_BASE}/chat/completions`, {
@@ -46,8 +48,13 @@ export async function chat(role, messages, { maxTokens = 1000, temperature = 0.4
     throw new Error(`OpenRouter ${res.status}: ${text.slice(0, 200)}`);
   }
   const data = await res.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (typeof content !== 'string') throw new Error('OpenRouter 返回为空');
+  const choice = data.choices?.[0];
+  const content = choice?.message?.content;
+  if (typeof content !== 'string' || !content) {
+    // finish_reason=length 且 content 为空：思考 token 吃光了 max_tokens 额度
+    const why = choice?.finish_reason === 'length' ? '（输出被 max_tokens 截断：思考占用了全部额度）' : '';
+    throw new Error(`OpenRouter 返回为空${why}`);
+  }
   return content;
 }
 
@@ -88,7 +95,7 @@ export async function classifyPage({ url, title, text }) {
     '只输出 JSON：{"type":"blog_comment|profile|other","commentable":true/false,"reason":"简短中文原因"}',
   ].join('\n');
   const user = `URL: ${url}\n标题: ${title || '(无)'}\n正文摘录:\n${(text || '').slice(0, LIMITS.articleTextChunk)}`;
-  const out = await chatJSON('classify', system, user, { maxTokens: 300, temperature: 0.1 });
+  const out = await chatJSON('classify', system, user, { maxTokens: 800, temperature: 0.1 });
   return {
     type: ['blog_comment', 'profile'].includes(out.type) ? out.type : 'other',
     commentable: !!out.commentable,
@@ -108,7 +115,7 @@ export async function detectForm({ formHtml, pageUrl }) {
     '找不到的字段给空字符串。',
   ].join('\n');
   const user = `页面: ${pageUrl}\n表单 HTML:\n${(formHtml || '').slice(0, LIMITS.formHtmlChunk)}`;
-  const out = await chatJSON('formDetect', system, user, { maxTokens: 400, temperature: 0.1 });
+  const out = await chatJSON('formDetect', system, user, { maxTokens: 1000, temperature: 0.1 });
   return out;
 }
 
@@ -127,7 +134,7 @@ export async function checkRelevance({ title, text, siteIntro, mainKeyword }) {
     '正文摘录:',
     (text || '').slice(0, LIMITS.articleTextChunk),
   ].join('\n');
-  const out = await chatJSON('classify', system, user, { maxTokens: 200, temperature: 0.1 });
+  const out = await chatJSON('classify', system, user, { maxTokens: 600, temperature: 0.1 });
   return { related: !!out.related, reason: out.reason || '' };
 }
 
@@ -140,7 +147,7 @@ export async function generateIdentity({ title, text }) {
     '只输出 JSON：{"name":"...","email":"..."}',
   ].join('\n');
   const user = `文章标题: ${title || '(无)'}\n正文摘录:\n${(text || '').slice(0, 800)}`;
-  const out = await chatJSON('classify', system, user, { maxTokens: 120, temperature: 0.9 });
+  const out = await chatJSON('classify', system, user, { maxTokens: 600, temperature: 0.9 });
   const name = String(out.name || '').trim().slice(0, 40);
   const email = String(out.email || '').trim().slice(0, 60);
   if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('生成的身份不合法');
@@ -179,7 +186,7 @@ export async function generateComment({ url, title, text }, { targetUrl, siteInt
   const out = await chat('commentGen', [
     { role: 'system', content: system },
     { role: 'user', content: user },
-  ], { maxTokens: 400, temperature: 0.8, json: false });
+  ], { maxTokens: 1500, temperature: 0.8, json: false });
   const cleaned = out.trim();
   if (!targetUrl) return cleaned.replace(/\s*\{\{LINK:[^}]+\}\}/g, '');
   return buildCommentWithLink(cleaned, targetUrl, mainKeyword || 'this website');
@@ -192,6 +199,6 @@ export async function discoverLinks(html, baseUrl) {
     '只输出 JSON：{"links":["绝对URL1","绝对URL2",...]}，最多 50 条。',
   ].join('\n');
   const user = `基准地址: ${baseUrl}\nHTML:\n${(html || '').slice(0, LIMITS.discoverHtmlChunk)}`;
-  const out = await chatJSON('discover', system, user, { maxTokens: 1500, temperature: 0.1 });
+  const out = await chatJSON('discover', system, user, { maxTokens: 2500, temperature: 0.1 });
   return Array.isArray(out.links) ? out.links.filter((u) => typeof u === 'string' && /^https?:\/\//.test(u)) : [];
 }

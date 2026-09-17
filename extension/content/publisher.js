@@ -1,24 +1,72 @@
 /**
- * 发布器：识别评论表单 → 填入 AI 评论与身份信息 → 半自动弹「Comment Ready」浮层等人工确认 / 全自动直接提交。
- * 由 background 注入，通过 window.__BCM_PUB__ 的 detect / fill / submit / cleanup 四个入口调用。
+ * 发布器：识别评论表单 → 填入 AI 评论与身份信息 → 半自动弹浮层等人工确认 / 全自动直接提交。
+ * 由 background 注入，通过 window.__BCM_PUB__ 调用：
+ *   detect / fill / submit / cleanup / showOverlay / setStatus / setStep / markForm / showComment。
+ * 「AI 识别评论表单」完成后由后台调用 markForm：滚动到识别出的评论框并加蓝色高亮，
+ * 让人工确认 AI 找到的是哪个表单（与红色「定位目标链接」标记互不干扰）；
+ * 评论生成后由 showComment 把评论/昵称/邮箱展示在浮层上，每个字段带复制按钮，
+ * 识别或填表失败时可手动粘贴。
+ * 半自动模式下页面一打开就显示浮层（showOverlay），AI 步骤（识别表单/生成评论/填写表单）
+ * 不自动执行，由浮层上的步骤按钮逐个手动触发（setStep 控制可点项），填表完成后才解锁
+ * Submit / Skip；浮层上的「定位目标链接」按钮可循环跳转到页面中包含收集目标域名
+ * （同行站点）的锚点，供人工参考已有外链。
  */
 (function () {
   if (window.__BCM_PUB__) return;
 
   const OVERLAY_ID = '__bcm_overlay__';
+  const BALL_ID = '__bcm_ball__';
 
   const I18N = {
     zh: {
-      title: 'Comment Ready',
-      body: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。',
+      title: '评论发布助手',
+      manual: '页面已打开。请按顺序点击步骤按钮，确认无误后再提交。',
+      detecting: '正在识别评论表单…',
+      generating: 'AI 正在生成评论…',
+      filling: '正在自动填写表单…',
+      formDone: '表单识别完成，请点击「生成评论」。',
+      commentDone: '评论已生成，请点击「填写表单」。',
+      ready: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。',
+      stepDetect: '① AI 识别评论表单',
+      stepGen: '② AI 生成评论',
+      stepFill: '③ 自动填写表单',
       skip: 'Skip',
       submit: 'Submit',
+      locate: '定位目标链接',
+      noTarget: '未找到该资源对应的收集目标域名',
+      noLink: '页面中未找到指向目标域名的链接',
+      fieldComment: '评论内容',
+      fieldName: '昵称',
+      fieldEmail: '邮箱',
+      copy: '复制',
+      copied: '已复制 ✓',
+      minimize: '最小化',
+      restore: '展开评论助手',
     },
     en: {
-      title: 'Comment Ready',
-      body: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.',
+      title: 'Comment Assistant',
+      manual: 'Page opened. Click the step buttons in order, then submit after review.',
+      detecting: 'Detecting the comment form…',
+      generating: 'AI is generating the comment…',
+      filling: 'Filling the comment form…',
+      formDone: 'Form detected. Click "Generate comment" to continue.',
+      commentDone: 'Comment generated. Click "Fill form" to continue.',
+      ready: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.',
+      stepDetect: '① AI detect form',
+      stepGen: '② AI generate comment',
+      stepFill: '③ Auto fill form',
       skip: 'Skip',
       submit: 'Submit',
+      locate: 'Locate target link',
+      noTarget: 'No collect target domain found for this resource',
+      noLink: 'No link pointing to the target domain was found on this page',
+      fieldComment: 'Comment',
+      fieldName: 'Name',
+      fieldEmail: 'Email',
+      copy: 'Copy',
+      copied: 'Copied ✓',
+      minimize: 'Minimize',
+      restore: 'Expand comment assistant',
     },
   };
 
@@ -158,16 +206,205 @@
         return { ok: true, filled, submitFound: lastFill.submitFound };
       }
 
-      showOverlay(cfg.lang || 'zh');
+      // 填表完成：浮层切到「待确认」状态（浮层在页面打开时已由 showOverlay 显示）
+      if (!overlayEls) showOverlay({ lang: cfg.lang, refDomain: cfg.refDomain, resourceUrl: cfg.resourceUrl });
+      setReady();
       return { ok: true, filled };
     } catch (e) {
       return { ok: false, error: String((e && e.message) || e) };
     }
   }
 
-  function showOverlay(lang) {
+  // ---------- 浮层：页面打开即显示，随流程更新状态，填表后才解锁 Submit / Skip ----------
+
+  let overlayCfg = { lang: 'zh', refDomain: '', resourceUrl: null };
+  let overlayEls = null; // { status, skipBtn, submitBtn, steps }
+  let linkIdx = 0;
+  let lastMarked = null; // 当前红框标记的链接 { el, outline, outlineOffset }
+
+  function strings() {
+    return I18N[overlayCfg.lang === 'en' ? 'en' : 'zh'];
+  }
+
+  function setStatus(keyOrText) {
+    const s = strings();
+    if (overlayEls && overlayEls.status) overlayEls.status.textContent = s[keyOrText] || keyOrText;
+  }
+
+  /** 归一化域名：支持完整 URL 或裸域名，去 www、转小写 */
+  function domainOf(u) {
+    if (!u) return '';
+    try { return new URL(u).hostname.replace(/^www\./, '').toLowerCase(); }
+    catch { return String(u).replace(/^https?:\/\//i, '').split('/')[0].replace(/^www\./, '').toLowerCase(); }
+  }
+
+  // 高亮标记的样式：红框 + 红底色 + 外圈光晕，三层叠加在复杂页面上也醒目
+  const MARK_PROPS = ['outline', 'outlineOffset', 'backgroundColor', 'boxShadow'];
+  const MARK_STYLE = {
+    outline: '3px solid #ef4444',
+    outlineOffset: '2px',
+    backgroundColor: 'rgba(239,68,68,.20)',
+    boxShadow: '0 0 0 6px rgba(239,68,68,.30), 0 0 18px rgba(239,68,68,.55)',
+  };
+
+  function unmark() {
+    if (!lastMarked) return;
+    for (const p of MARK_PROPS) lastMarked.el.style[p] = lastMarked.prev[p];
+    lastMarked = null;
+  }
+
+  // ---------- markForm：AI 识别完成后高亮目标表单 ----------
+
+  // 表单高亮用蓝色系，与红色「定位目标链接」标记区分
+  const FORM_MARK_STYLE = {
+    outline: '3px solid #4a9eff',
+    outlineOffset: '2px',
+    backgroundColor: 'rgba(74,158,255,.12)',
+    boxShadow: '0 0 0 6px rgba(74,158,255,.25), 0 0 18px rgba(74,158,255,.5)',
+  };
+  let formMarked = null; // { el, prev }
+
+  function unmarkForm() {
+    if (!formMarked) return;
+    for (const p of MARK_PROPS) formMarked.el.style[p] = formMarked.prev[p];
+    formMarked = null;
+  }
+
+  /** 滚动到 AI 识别出的评论框（找不到退回整个表单）并加蓝色高亮 */
+  function markForm(form) {
+    try {
+      const f = form || {};
+      const el = (f.comment && q(f.comment)) || (f.formSelector && q(f.formSelector));
+      if (!el) return { ok: false, error: '页面上未找到识别出的表单元素' };
+      unmarkForm();
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const prev = {};
+      for (const p of MARK_PROPS) prev[p] = el.style[p];
+      formMarked = { el, prev };
+      for (const p of MARK_PROPS) el.style[p] = FORM_MARK_STYLE[p];
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String((e && e.message) || e) };
+    }
+  }
+
+  /** 循环定位页面中包含收集目标域名的锚点，并用红框标记 */
+  function locateTargetLink() {
+    const s = strings();
+    const domain = domainOf(overlayCfg.refDomain);
+    if (!domain) { setStatus(s.noTarget); return; }
+    // 有的站点会把评论区渲染成多个 Tab（如「按时间/按热门」），隐藏 Tab 里的副本要跳过：
+    // display:none 的元素滚不过去也看不见红框。优先只取可见锚点，全不可见时退回全部。
+    const all = qa('a[href]').filter((a) => (a.href || '').toLowerCase().includes(domain));
+    const visible = all.filter((a) => a.offsetParent !== null || a.getClientRects().length > 0);
+    const links = visible.length ? visible : all;
+    if (!links.length) { setStatus(s.noLink); return; }
+    const i = linkIdx % links.length;
+    linkIdx = i + 1;
+    const el = links[i];
+    // 清除上一个高亮，标记始终只框住当前定位到的链接
+    unmark();
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const prev = {};
+    for (const p of MARK_PROPS) prev[p] = el.style[p];
+    lastMarked = { el, prev };
+    for (const p of MARK_PROPS) el.style[p] = MARK_STYLE[p];
+    setStatus(overlayCfg.lang === 'en'
+      ? `Jumped to target link ${i + 1}/${links.length}`
+      : `已定位到第 ${i + 1}/${links.length} 个目标链接`);
+  }
+
+  /** 复制文本到剪贴板（clipboard API 失败时退回 execCommand），按钮短暂显示「已复制」 */
+  async function copyText(text, btn) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.cssText = 'position:fixed;opacity:0;pointer-events:none;';
+      document.documentElement.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch { /* 复制失败则用户可手动全选 */ }
+      ta.remove();
+    }
+    const old = btn.textContent;
+    btn.textContent = strings().copied;
+    setTimeout(() => { btn.textContent = old; }, 1200);
+  }
+
+  /** 评论生成后：在浮层展示各字段内容，每个字段带复制按钮（识别/填表失败时可手动粘贴） */
+  function showComment(fields) {
+    if (!overlayEls || !overlayEls.fieldsBox || !fields) return;
+    const s = strings();
+    const box = overlayEls.fieldsBox;
+    box.innerHTML = '';
+    const defs = [
+      ['comment', s.fieldComment, true],
+      ['name', s.fieldName, false],
+      ['email', s.fieldEmail, false],
+    ];
+    for (const [key, label, multi] of defs) {
+      const val = fields[key];
+      if (!val) continue;
+      const rowEl = document.createElement('div');
+      const lab = document.createElement('div');
+      lab.textContent = label;
+      lab.style.cssText = 'color:#9ca3af;font-size:11px;margin-bottom:2px;display:flex;justify-content:space-between;align-items:center;';
+      const btn = document.createElement('button');
+      btn.textContent = s.copy;
+      btn.style.cssText = 'padding:1px 8px;border:1px solid #4a9eff;border-radius:6px;background:transparent;color:#4a9eff;font-size:11px;cursor:pointer;flex-shrink:0;';
+      btn.addEventListener('click', () => copyText(val, btn));
+      lab.appendChild(btn);
+      const input = document.createElement(multi ? 'textarea' : 'input');
+      if (!multi) input.type = 'text';
+      input.readOnly = true;
+      input.value = val;
+      if (multi) input.rows = 4;
+      input.style.cssText = 'width:100%;box-sizing:border-box;background:#111420;border:1px solid #2d3450;border-radius:6px;color:#e5e7eb;font-size:12px;padding:5px 7px;resize:vertical;';
+      rowEl.appendChild(lab);
+      rowEl.appendChild(input);
+      box.appendChild(rowEl);
+    }
+    box.style.display = 'flex';
+  }
+
+  // ---------- 最小化：浮层收起为右下角半透明小球，点小球恢复原浮层 ----------
+
+  function minimizeOverlay() {
+    const wrap = document.getElementById(OVERLAY_ID);
+    if (!wrap) return;
+    wrap.style.display = 'none';
+    if (document.getElementById(BALL_ID)) return;
+    const s = strings();
+    const ball = document.createElement('div');
+    ball.id = BALL_ID;
+    ball.title = s.restore;
+    ball.textContent = '💬';
+    ball.style.cssText = [
+      'position:fixed', 'right:16px', 'bottom:16px', 'width:44px', 'height:44px',
+      'border-radius:50%', 'z-index:2147483647', 'cursor:pointer', 'user-select:none',
+      'background:rgba(74,158,255,.45)', 'font-size:20px',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'box-shadow:0 4px 16px rgba(0,0,0,.35)', 'transition:background .15s',
+    ].join(';');
+    ball.addEventListener('mouseenter', () => (ball.style.background = 'rgba(74,158,255,.8)'));
+    ball.addEventListener('mouseleave', () => (ball.style.background = 'rgba(74,158,255,.45)'));
+    ball.addEventListener('click', restoreOverlay);
+    document.documentElement.appendChild(ball);
+  }
+
+  function restoreOverlay() {
+    const ball = document.getElementById(BALL_ID);
+    if (ball) ball.remove();
+    const wrap = document.getElementById(OVERLAY_ID);
+    if (wrap) wrap.style.display = '';
+  }
+
+  function showOverlay(cfg) {
+    overlayCfg = { ...overlayCfg, ...(cfg || {}) };
+    linkIdx = 0;
     cleanup();
-    const s = I18N[lang === 'en' ? 'en' : 'zh'];
+    const s = strings();
     const wrap = document.createElement('div');
     wrap.id = OVERLAY_ID;
     wrap.style.cssText = [
@@ -176,13 +413,59 @@
       'box-shadow:0 8px 32px rgba(0,0,0,.45)', 'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif',
     ].join(';');
 
+    // 头部：左上角最小化按钮 + 标题
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;';
+    const minBtn = document.createElement('button');
+    minBtn.textContent = '—';
+    minBtn.title = s.minimize;
+    minBtn.style.cssText = 'width:22px;height:22px;flex-shrink:0;border:none;border-radius:6px;background:#2d3450;color:#9ca3af;font-size:13px;line-height:1;cursor:pointer;padding:0;';
+    minBtn.addEventListener('mouseenter', () => (minBtn.style.background = '#3d4666'));
+    minBtn.addEventListener('mouseleave', () => (minBtn.style.background = '#2d3450'));
+    minBtn.addEventListener('click', minimizeOverlay);
+
     const title = document.createElement('div');
     title.textContent = s.title;
-    title.style.cssText = 'color:#4a9eff;font-size:15px;font-weight:700;margin-bottom:8px;';
+    title.style.cssText = 'color:#4a9eff;font-size:15px;font-weight:700;flex:1;';
 
-    const body = document.createElement('div');
-    body.textContent = s.body;
-    body.style.cssText = 'color:#d1d5db;font-size:12.5px;line-height:1.6;margin-bottom:14px;white-space:pre-line;';
+    header.appendChild(minBtn);
+    header.appendChild(title);
+
+    const status = document.createElement('div');
+    status.style.cssText = 'color:#d1d5db;font-size:12.5px;line-height:1.6;margin-bottom:14px;white-space:pre-line;';
+
+    // 步骤按钮：AI 操作不自动执行，由人工逐个点击触发
+    const stepCol = document.createElement('div');
+    stepCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:10px;';
+    const mkStep = (key, label) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.style.cssText = 'width:100%;padding:7px 10px;border:none;border-radius:8px;background:#2d3450;color:#e5e7eb;font-size:12.5px;cursor:pointer;text-align:left;box-sizing:border-box;';
+      b.addEventListener('click', () => {
+        b.disabled = true;
+        b.style.opacity = '.45';
+        b.style.cursor = 'not-allowed';
+        chrome.runtime.sendMessage({ type: 'pub:step', resourceUrl: overlayCfg.resourceUrl, step: key }).catch(() => {});
+      });
+      return b;
+    };
+    const steps = {
+      detectForm: mkStep('detectForm', s.stepDetect),
+      genComment: mkStep('genComment', s.stepGen),
+      fill: mkStep('fill', s.stepFill),
+    };
+    for (const b of Object.values(steps)) stepCol.appendChild(b);
+
+    // 评论字段展示区：生成评论后由 showComment 填充（每字段带复制按钮）
+    const fieldsBox = document.createElement('div');
+    fieldsBox.style.cssText = 'display:none;flex-direction:column;gap:8px;margin-bottom:10px;';
+
+    const locateBtn = document.createElement('button');
+    locateBtn.textContent = s.locate;
+    locateBtn.style.cssText = 'width:100%;padding:7px 0;margin-bottom:10px;border:1px solid #4a9eff;border-radius:8px;background:transparent;color:#4a9eff;font-size:12.5px;cursor:pointer;';
+    locateBtn.addEventListener('click', locateTargetLink);
+    locateBtn.addEventListener('mouseenter', () => (locateBtn.style.background = 'rgba(74,158,255,.12)'));
+    locateBtn.addEventListener('mouseleave', () => (locateBtn.style.background = 'transparent'));
 
     const row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;';
@@ -197,26 +480,68 @@
 
     skipBtn.addEventListener('click', () => decide('skip'));
     submitBtn.addEventListener('click', () => decide('submit'));
-    skipBtn.addEventListener('mouseenter', () => (skipBtn.style.background = '#4b5563'));
+    skipBtn.addEventListener('mouseenter', () => { if (!skipBtn.disabled) skipBtn.style.background = '#4b5563'; });
     skipBtn.addEventListener('mouseleave', () => (skipBtn.style.background = '#374151'));
 
+    // 初始为禁用：等填表完成后由 setReady 解锁
+    for (const b of [skipBtn, submitBtn]) {
+      b.disabled = true;
+      b.style.opacity = '.45';
+      b.style.cursor = 'not-allowed';
+    }
+
     function decide(decision) {
-      const rurl = lastFill && lastFill.resourceUrl;
+      const rurl = (lastFill && lastFill.resourceUrl) || overlayCfg.resourceUrl;
       cleanup();
       if (rurl) chrome.runtime.sendMessage({ type: 'pub:decision', resourceUrl: rurl, decision }).catch(() => {});
     }
 
     row.appendChild(skipBtn);
     row.appendChild(submitBtn);
-    wrap.appendChild(title);
-    wrap.appendChild(body);
+    wrap.appendChild(header);
+    wrap.appendChild(status);
+    wrap.appendChild(stepCol);
+    wrap.appendChild(fieldsBox);
+    wrap.appendChild(locateBtn);
     wrap.appendChild(row);
     document.documentElement.appendChild(wrap);
+    overlayEls = { status, skipBtn, submitBtn, steps, fieldsBox };
+    setStep('detectForm');
+  }
+
+  /** 切换当前可点的步骤按钮，并更新状态文案；key ∈ detectForm/genComment/fill/done */
+  function setStep(key) {
+    if (!overlayEls || !overlayEls.steps) return;
+    for (const [k, b] of Object.entries(overlayEls.steps)) {
+      const on = k === key;
+      b.disabled = !on;
+      b.style.opacity = on ? '1' : '.45';
+      b.style.cursor = on ? 'pointer' : 'not-allowed';
+    }
+    const s = strings();
+    const msg = { detectForm: s.manual, genComment: s.formDone, fill: s.commentDone }[key];
+    if (msg) setStatus(msg);
+  }
+
+  /** 填表完成：状态切到待确认文案并解锁 Submit / Skip */
+  function setReady() {
+    if (!overlayEls) return;
+    setStatus('ready');
+    for (const b of [overlayEls.skipBtn, overlayEls.submitBtn]) {
+      b.disabled = false;
+      b.style.opacity = '1';
+      b.style.cursor = 'pointer';
+    }
   }
 
   function cleanup() {
     const old = document.getElementById(OVERLAY_ID);
     if (old) old.remove();
+    const ball = document.getElementById(BALL_ID);
+    if (ball) ball.remove(); // 最小化小球一并清掉
+    overlayEls = null;
+    unmark(); // 撤掉定位标记，恢复页面原样
+    unmarkForm(); // 撤掉表单高亮
   }
 
   // ---------- submit：点击提交 ----------
@@ -237,5 +562,5 @@
     }
   }
 
-  window.__BCM_PUB__ = { detect, fill, submit, cleanup };
+  window.__BCM_PUB__ = { detect, fill, submit, cleanup, showOverlay, setStatus, setStep, markForm, showComment };
 })();

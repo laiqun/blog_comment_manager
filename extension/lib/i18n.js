@@ -82,9 +82,19 @@ export const MESSAGES = {
   modeAuto: { zh: '全自动（直接提交，不审核）', en: 'Fully auto (submit directly)' },
   resourceScope: { zh: '资源范围', en: 'Resource Scope' },
   scopeReady: { zh: '全部「可发布」资源', en: 'All "ready" resources' },
+  scopeSingle: { zh: '仅当前资源（1 条）', en: 'Current resource only (1)' },
   btnCreate: { zh: '创建并运行', en: 'Create & Run' },
   btnSave: { zh: '保存', en: 'Save' },
   noReadyResources: { zh: '资源库中没有「可发布」资源，请先收集', en: 'No "ready" resources. Collect first' },
+
+  // 任务模板（IndexedDB templates 表）
+  tplLabel: { zh: '模板', en: 'Template' },
+  tplSelect: { zh: '选择模板填充…', en: 'Fill from template…' },
+  tplSave: { zh: '存为模板', en: 'Save as template' },
+  tplNamePrompt: { zh: '模板名称', en: 'Template name' },
+  tplOverwrite: { zh: '已存在同名模板「{name}」，覆盖它？', en: 'Template "{name}" exists. Overwrite?' },
+  tplSaved: { zh: '模板已保存', en: 'Template saved' },
+  tplDeleted: { zh: '模板已删除', en: 'Template deleted' },
 
   // 任务明细弹窗
   titleTaskDetail: { zh: '任务明细', en: 'Task Details' },

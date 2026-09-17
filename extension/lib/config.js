@@ -3,7 +3,7 @@
  * 联调时只需要改这个文件，不用动其他逻辑。
  */
 
-export const DEFAULT_MODEL = 'google/gemini-2.0-flash-001';
+export const DEFAULT_MODEL = 'z-ai/glm-5.3-flash';
 
 export const DEFAULT_SETTINGS = {
   openrouterKey: '',
@@ -35,6 +35,7 @@ export const LIMITS = {
   articleTextChunk: 3000,// 送 AI 的正文截断长度
   discoverHtmlChunk: 20000,
   pageSettleMs: 1200,    // 注入前等待页面渲染时间
+  aiReasoningEffort: 'low', // 思考模型（如 GLM）的推理强度：压低避免思考 token 吃光 max_tokens 导致 content 为空
 };
 
 /**
