@@ -88,7 +88,14 @@
     <!-- ===== 日志 ===== -->
     <section id="view-logs" class="view">
       <div class="row-between">
-        <h2 class="section-title" data-i18n="logsTitle">运行日志</h2>
+        <div class="log-title-row">
+          <h2 class="section-title" data-i18n="logsTitle">运行日志</h2>
+          <label class="log-switch" data-i18n-title="logSwitchTitle" title="开启后记录运行日志，关闭则直接丢弃">
+            <input type="checkbox" id="log-enabled" checked />
+            <span class="slider"></span>
+            <span class="log-switch-label" data-i18n="logSwitch">记录日志</span>
+          </label>
+        </div>
         <div style="display:flex;gap:6px">
           <button id="btn-copy-logs" class="btn btn-ghost btn-sm" data-i18n="copyLogs">一键复制</button>
           <button id="btn-clear-logs" class="btn btn-ghost btn-sm" data-i18n="clearLogs">清空日志</button>

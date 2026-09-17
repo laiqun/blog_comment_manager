@@ -47,6 +47,19 @@ test('addLog 有上限且新日志在末尾', () => {
   assert.equal(logs.at(-1).msg, `log-${LIMITS.logCap + 9}`);
 });
 
+test('日志开关关闭时 addLog 直接丢弃', () => {
+  const st = getState();
+  st.logs.length = 0;
+  st.settings.logEnabled = false;
+  const before = st.logs.length;
+  addLog('system', 'dropped');
+  assert.equal(st.logs.length, before);
+  st.settings.logEnabled = true;
+  addLog('system', 'kept');
+  assert.equal(st.logs.length, before + 1);
+  assert.equal(st.logs.at(-1).msg, 'kept');
+});
+
 test('save 不把大数据表写进 chrome.storage', async () => {
   await save(); // 全量保存
   const stored = mem.get('bcm_store');

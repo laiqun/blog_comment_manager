@@ -170,6 +170,8 @@ function renderPublish() {
 function renderLogs() {
   const list = $('#log-list');
   const logs = snap.logs || [];
+  // 日志开关状态回填（默认开）
+  $('#log-enabled').checked = (snap.settings?.logEnabled) !== false;
   $('#logs-empty').style.display = logs.length ? 'none' : '';
   list.innerHTML = logs.map((l) => {
     const url = l.url ? `<div class="url">${esc(l.url.length > 60 ? l.url.slice(0, 60) + '…' : l.url)}</div>` : '';
@@ -398,6 +400,11 @@ function bindEvents() {
 
   // 日志
   $('#btn-clear-logs').addEventListener('click', () => act({ type: 'clearLogs' }));
+
+  // 日志开关：关闭后后台 addLog 直接丢弃新日志
+  $('#log-enabled').addEventListener('change', (e) => {
+    send({ type: 'setSettings', patch: { logEnabled: e.target.checked } }).catch(() => {});
+  });
 
   // 一键复制日志（调试时方便发给 AI）
   $('#btn-copy-logs').addEventListener('click', async () => {

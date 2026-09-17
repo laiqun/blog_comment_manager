@@ -338,3 +338,44 @@ input::placeholder { color: var(--text-faint); }
   color: var(--text-faint);
   font-size: 11px;
 }
+
+/* 日志开关（日志 Tab 标题右侧） */
+.log-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.log-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.log-switch input { display: none; }
+.log-switch .slider {
+  position: relative;
+  width: 30px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--input);
+  transition: background 0.15s;
+  flex-shrink: 0;
+}
+.log-switch .slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s;
+}
+.log-switch input:checked + .slider { background: var(--green); }
+.log-switch input:checked + .slider::after { transform: translateX(14px); }
+.log-switch-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}

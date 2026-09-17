@@ -6,7 +6,7 @@ import {
   findTask, taskCounts, uid, domainOf,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
-import { idbGetDomain, idbGetAll, idbPutAll } from '../lib/idb.js';
+import { idbGet, idbGetDomain, idbGetAll, idbPutAll } from '../lib/idb.js';
 import { CollectController } from './collect.js';
 import { PublishRunner } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
@@ -92,6 +92,7 @@ async function snapshot() {
       hasKey: !!st.settings.openrouterKey,
       pageDelayMinMs: st.settings.pageDelayMinMs,
       pageDelayMaxMs: st.settings.pageDelayMaxMs,
+      logEnabled: st.settings.logEnabled !== false,
     },
   };
 }
@@ -287,14 +288,27 @@ async function handleMessage(msg, sender) {
       const keys = Array.isArray(msg.keys) ? msg.keys : [];
       const enabled = msg.enabled !== false;
       const want = new Set(keys.map(([d, u]) => `${d} ${u}`));
+      addLog('system', `资源启停请求：${keys.length} 条，enabled=${enabled}`, 'info', keys[0] && keys[0][1]);
       const rows = await idbGetAll('analysis').catch(() => []);
       const dirty = rows
         .filter((r) => r && r.url && want.has(`${r.targetDomain} ${r.url}`) && (r.enabled !== false) !== enabled)
         .map((r) => ({ ...r, enabled }));
+      // 一条都没匹配到通常是 key 对不上（主键不一致），打印请求 key 与库存样本对比
+      if (!dirty.length && keys.length) {
+        const sample = rows.filter((r) => r && r.url).slice(0, 3)
+          .map((r) => `[${r.targetDomain}, ${r.url}]`).join(' | ');
+        addLog('system', `资源启停未匹配到待更新记录：请求 key=${[...want].join(' | ')}；analysis 共 ${rows.length} 条，样本：${sample || '(空)'}`,
+          'warn', keys[0] && keys[0][1]);
+      }
       if (dirty.length) {
         await idbPutAll('analysis', dirty).catch((e) =>
           addLog('system', `资源启用状态写入失败：${e.message}`, 'warn'));
+        // 回读第一条校验落库结果
+        const [d, u] = keys[0] || [];
+        const back = d ? await idbGet('analysis', [d, u]).catch(() => null) : null;
+        addLog('system', `资源启停写入 ${dirty.length} 条；回读校验 enabled=${back ? back.enabled : '(读不到记录)'}`, 'info', u);
       }
+      await save('logs');
       broadcast();
       return { ok: true, snapshot: await snapshot() };
     }
@@ -342,6 +356,7 @@ async function handleMessage(msg, sender) {
       const patch = msg.patch || {};
       if (patch.language) st.settings.language = patch.language === 'en' ? 'en' : 'zh';
       if (typeof patch.publishMode === 'string') st.settings.publishMode = patch.publishMode === 'auto' ? 'auto' : 'semi';
+      if (typeof patch.logEnabled === 'boolean') st.settings.logEnabled = patch.logEnabled;
       if (typeof patch.openrouterKey === 'string') st.settings.openrouterKey = patch.openrouterKey.trim();
       if (patch.models && typeof patch.models === 'object') {
         for (const k of Object.keys(st.settings.models)) {

@@ -104,6 +104,7 @@ export async function clearAll() {
 // ---------- 日志 ----------
 
 export function addLog(src, msg, level = 'info', url = '') {
+  if (state.settings.logEnabled === false) return; // 日志开关关闭：直接丢弃
   state.logs.push({ t: Date.now(), src, msg, level, url });
   if (state.logs.length > LIMITS.logCap) state.logs.splice(0, state.logs.length - LIMITS.logCap);
 }

@@ -121,6 +121,8 @@ export const MESSAGES = {
   resPublish: { zh: '立即发布', en: 'Publish now' },
   resEnable: { zh: '启用 / 停用', en: 'Enable / disable' },
   resToggleAll: { zh: '启用全部 / 停用全部', en: 'Enable / disable all' },
+  logSwitch: { zh: '记录日志', en: 'Logging' },
+  logSwitchTitle: { zh: '开启后记录运行日志，关闭则直接丢弃', en: 'When off, new logs are discarded' },
   singleTaskName: { zh: '单条发布', en: 'Single publish' },
 
   // ---- 设置页 ----

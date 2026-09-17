@@ -24,6 +24,7 @@ export const DEFAULT_SETTINGS = {
   aiDelayMs: 400,          // AI 请求最小间隔
   pageDelayMinMs: 3000,    // 收集翻页最小间隔（可在收集 Tab 配置）
   pageDelayMaxMs: 9000,    // 收集翻页最大间隔（实际取区间内随机值）
+  logEnabled: true,        // 日志开关：关闭时 addLog 直接丢弃日志
 };
 
 export const LIMITS = {
