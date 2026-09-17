@@ -200,7 +200,8 @@ async function loadLibrary() {
 function filteredResources() {
   let rs = libraryRows || [];
   if (filters.type !== 'all') rs = rs.filter((r) => r.type === filters.type);
-  if (filters.status) rs = rs.filter((r) => r.status === filters.status);
+  if (filters.status === 'published') rs = rs.filter((r) => r.published);
+  else if (filters.status) rs = rs.filter((r) => r.status === filters.status);
   return rs;
 }
 
@@ -211,6 +212,13 @@ function renderLibrary() {
   const rs = filteredResources();
   $('#res-count').textContent = t('countLine', { n: rs.length });
 
+  // 总开关：作用于全部资源（非当前筛选子集）；全启用=勾选，部分启用=半选
+  const all = libraryRows || [];
+  const allBox = $('#res-toggle-all');
+  allBox.disabled = all.length === 0;
+  allBox.checked = all.length > 0 && all.every((r) => r.enabled !== false);
+  allBox.indeterminate = !allBox.checked && all.some((r) => r.enabled !== false);
+
   const list = $('#res-list');
   $('#res-empty').style.display = rs.length ? 'none' : '';
   // 最多渲染 200 条，避免 popup 卡顿
@@ -219,15 +227,15 @@ function renderLibrary() {
     const fav = `<img class="fav" src="${chrome.runtime.getURL('/_favicon/?pageUrl=' + encodeURIComponent(r.url) + '&clientId=bcm')}" onerror="this.style.display='none'">`;
     const short = r.domain + (r.url.replace(/^https?:\/\/[^/]+/, '').length > 1 ? r.url.replace(/^https?:\/\/[^/]+/, '') : '');
     return `
-      <div class="res-item">
+      <div class="res-item${r.enabled === false ? ' disabled' : ''}">
         ${fav}
         <span class="badge type">${t(r.type === 'profile' ? 'type_profile' : 'type_blog_comment')}</span>
         <span class="url" title="${esc(r.url)}">${esc(short.length > 34 ? short.slice(0, 34) + '…' : short)}</span>
-        <span class="badge st-${r.status}">${t('st_' + r.status)}</span>
+        <span class="badge ${r.published ? 'st-published' : 'st-' + r.status}">${t(r.published ? 'st_published' : 'st_' + r.status)}</span>
         <span class="ops">
+          <input type="checkbox" class="res-enable" data-ract="toggle" data-url="${esc(r.url)}" data-td="${esc(r.targetDomain)}" ${r.enabled !== false ? 'checked' : ''} title="${t('resEnable')}">
           <button class="icon-btn" data-ract="open" data-url="${esc(r.url)}" title="${t('resOpen')}">🔗</button>
           <button class="icon-btn" data-ract="publish" data-url="${esc(r.url)}" title="${t('resPublish')}">↗</button>
-          <button class="icon-btn danger" data-ract="del" data-url="${esc(r.url)}" title="${t('resDelete')}">✕</button>
         </span>
       </div>`;
   }).join('');
@@ -245,7 +253,7 @@ function closeModal() {
 }
 
 function showCreateTaskModal(prefill = null) {
-  const readyCount = (snap.resources || []).filter((r) => r.status === 'ready').length;
+  const readyCount = (snap.resources || []).filter((r) => r.status === 'ready' && r.enabled !== false).length;
   const isEdit = !!prefill;
   if (!isEdit && readyCount === 0) {
     toast(t('noReadyResources'), 'error');
@@ -296,10 +304,10 @@ function showCreateTaskModal(prefill = null) {
     if (isEdit) {
       await act({ type: 'updateTask', id: prefill.id, name, targetUrl, siteIntro, mainKeyword, mode });
     } else {
-      const ids = (snap.resources || []).filter((r) => r.status === 'ready').map((r) => r.id);
-      if (!ids.length) return toast(t('noReadyResources'), 'error');
+      const urls = (snap.resources || []).filter((r) => r.status === 'ready' && r.enabled !== false).map((r) => r.url);
+      if (!urls.length) return toast(t('noReadyResources'), 'error');
       closeModal();
-      await act({ type: 'createTask', name, targetUrl, siteIntro, mainKeyword, mode, resourceIds: ids });
+      await act({ type: 'createTask', name, targetUrl, siteIntro, mainKeyword, mode, resourceUrls: urls });
     }
     closeModal();
   });
@@ -307,11 +315,11 @@ function showCreateTaskModal(prefill = null) {
 
 function showDetailModal(task) {
   const statusLabel = { success: t('detailSuccess'), skip: t('detailSkip'), fail: t('detailFail'), captcha: t('detailCaptcha') };
-  const items = (task.resourceIds || []).map((id) => {
-    const res = (snap.resources || []).find((r) => r.id === id);
-    if (!res) return '';
-    const st = task.results[id] ? statusLabel[task.results[id]] || task.results[id] : t('detailWaiting');
-    return `<div class="detail-item"><span class="badge st-${res.status}">${st}</span><span class="u" title="${esc(res.url)}">${esc(res.url)}</span></div>`;
+  const items = (task.resourceUrls || []).map((url) => {
+    const res = (snap.resources || []).find((r) => r.url === url);
+    const st = task.results[url] ? statusLabel[task.results[url]] || task.results[url] : t('detailWaiting');
+    const badge = res ? (res.published ? 'st-published' : 'st-' + res.status) : 'st-failed';
+    return `<div class="detail-item"><span class="badge ${badge}">${st}</span><span class="u" title="${esc(url)}">${esc(url)}</span></div>`;
   }).join('');
   openModal(`
     <h3>${t('titleTaskDetail')} — ${esc(task.name)}</h3>
@@ -425,18 +433,34 @@ function bindEvents() {
 
   // 资源行内操作
   $('#res-list').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-ract]');
+    const btn = e.target.closest('button[data-ract]');
     if (!btn) return;
     const url = btn.dataset.url;
     const res = (libraryRows || []).find((r) => r.url === url);
     if (!res) return;
     if (btn.dataset.ract === 'open') chrome.tabs.create({ url: res.url });
     if (btn.dataset.ract === 'publish') await act({ type: 'publishOne', url: res.url });
-    if (btn.dataset.ract === 'del') {
-      await act({ type: 'deleteLibraryRow', targetDomain: res.targetDomain, url: res.url });
-      libraryRows = (libraryRows || []).filter((r) => r.url !== url);
-      renderLibrary();
-    }
+  });
+
+  // 资源启用/停用（行内 checkbox）
+  $('#res-list').addEventListener('change', async (e) => {
+    const box = e.target.closest('input[data-ract="toggle"]');
+    if (!box) return;
+    const res = (libraryRows || []).find((r) => r.url === box.dataset.url && r.targetDomain === box.dataset.td);
+    if (!res) return;
+    res.enabled = box.checked;
+    renderLibrary();
+    await act({ type: 'setLibraryEnabled', keys: [[res.targetDomain, res.url]], enabled: box.checked });
+  });
+
+  // 总开关：启用全部 / 停用全部
+  $('#res-toggle-all').addEventListener('change', async (e) => {
+    const all = libraryRows || [];
+    if (!all.length) return;
+    const enabled = e.target.checked;
+    for (const r of all) r.enabled = enabled;
+    renderLibrary();
+    await act({ type: 'setLibraryEnabled', keys: all.map((r) => [r.targetDomain, r.url]), enabled });
   });
 
   // 导出收集数据集 CSV

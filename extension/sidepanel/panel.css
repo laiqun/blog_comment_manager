@@ -196,7 +196,9 @@ input::placeholder { color: var(--text-faint); }
 .chip:hover { color: var(--text); }
 .chip.active { background: var(--blue); color: #fff; }
 
-.count-line { color: var(--text-dim); font-size: 12px; margin: 6px 0 8px; }
+.count-line { color: var(--text-dim); font-size: 12px; }
+.count-row { display: flex; align-items: center; justify-content: space-between; margin: 6px 0 8px; }
+.count-row input { accent-color: var(--blue); cursor: pointer; }
 
 .res-list { display: flex; flex-direction: column; gap: 6px; }
 .res-item {
@@ -228,7 +230,9 @@ input::placeholder { color: var(--text-faint); }
   font-size: 12px;
   color: var(--text);
 }
-.res-item .ops { display: flex; gap: 4px; flex-shrink: 0; }
+.res-item .ops { display: flex; gap: 4px; flex-shrink: 0; align-items: center; }
+.res-item .ops input.res-enable { accent-color: var(--blue); cursor: pointer; }
+.res-item.disabled .url, .res-item.disabled .badge { opacity: .45; }
 
 /* ---- 页脚 ---- */
 .footer {

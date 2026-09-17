@@ -119,7 +119,8 @@ export const MESSAGES = {
   noResources: { zh: '暂无资源，去「收集」Tab 发现外链资源', en: 'No resources yet. Go to the Collect tab' },
   resOpen: { zh: '打开链接', en: 'Open link' },
   resPublish: { zh: '立即发布', en: 'Publish now' },
-  resDelete: { zh: '删除', en: 'Delete' },
+  resEnable: { zh: '启用 / 停用', en: 'Enable / disable' },
+  resToggleAll: { zh: '启用全部 / 停用全部', en: 'Enable / disable all' },
   singleTaskName: { zh: '单条发布', en: 'Single publish' },
 
   // ---- 设置页 ----

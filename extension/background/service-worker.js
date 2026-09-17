@@ -3,11 +3,10 @@
  */
 import {
   load, getState, save, clearAll, addLog,
-  listResources, getResourceByUrl, addResource, findResource, removeResourceByUrl,
   findTask, taskCounts, uid, domainOf,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
-import { idbGetDomain, idbGetAll, idbDelete } from '../lib/idb.js';
+import { idbGetDomain, idbGetAll, idbPutAll } from '../lib/idb.js';
 import { CollectController } from './collect.js';
 import { PublishRunner } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
@@ -32,7 +31,34 @@ function ensureControllers() {
 
 async function snapshot() {
   const st = getState();
-  const resources = await listResources().catch(() => []); // 资源库直接读 IndexedDB，不经内存态
+  // 可用资源 = analysis 表命中结论的记录（不经内存态）；同一 url 可能被多个目标域名收集到，按 url 去重合并：
+  // 任一记录停用即停用，任一目标网址发布过即标 published
+  const [analysis, published] = await Promise.all([
+    idbGetAll('analysis').catch(() => []),
+    idbGetAll('published').catch(() => []),
+  ]);
+  const publishedUrls = new Set(published.map((r) => r && r.url));
+  const hits = analysis
+    .filter((r) => r && r.url && VALID_STATUSES.includes(r.status))
+    .sort((a, b) => (b.checkedAt || 0) - (a.checkedAt || 0)); // 新命中的在前
+  const byUrl = new Map();
+  for (const r of hits) {
+    const cur = byUrl.get(r.url);
+    if (!cur) {
+      byUrl.set(r.url, {
+        url: r.url,
+        domain: domainOf(r.url),
+        status: r.status,
+        enabled: r.enabled !== false, // 旧数据无该字段，默认启用
+        published: publishedUrls.has(r.url),
+        checkedAt: r.checkedAt,
+      });
+    } else {
+      cur.enabled = cur.enabled && r.enabled !== false;
+      cur.published = cur.published || publishedUrls.has(r.url);
+    }
+  }
+  const resources = [...byUrl.values()];
   return {
     collect: {
       status: st.collectState.status,
@@ -50,13 +76,13 @@ async function snapshot() {
       id: t.id, name: t.name, targetUrl: t.targetUrl,
       siteIntro: t.siteIntro || '', mainKeyword: t.mainKeyword || '',
       mode: t.mode,
-      status: t.status, resourceIds: t.resourceIds, results: t.results || {},
+      status: t.status, resourceUrls: t.resourceUrls || [], results: t.results || {},
       createdAt: t.createdAt, finishedAt: t.finishedAt,
       counts: taskCounts(t),
     })),
     activeTaskId: st.activeTaskId,
     publish: st.publishRuntime
-      ? { taskId: st.publishRuntime.taskId, resourceId: st.publishRuntime.resourceId, stage: st.publishRuntime.stage }
+      ? { taskId: st.publishRuntime.taskId, resourceUrl: st.publishRuntime.resourceUrl, stage: st.publishRuntime.stage }
       : null,
     resources,
     logs: st.logs.slice(-200).reverse(),
@@ -189,14 +215,14 @@ async function handleMessage(msg, sender) {
         siteIntro: (msg.siteIntro || '').trim(),
         mainKeyword: (msg.mainKeyword || '').trim(),
         mode: msg.mode === 'auto' ? 'auto' : 'semi',
-        resourceIds: Array.isArray(msg.resourceIds) ? msg.resourceIds : [],
+        resourceUrls: Array.isArray(msg.resourceUrls) ? msg.resourceUrls : [],
         status: 'idle',
         results: {},
         createdAt: Date.now(),
         finishedAt: 0,
       };
       getState().tasks.unshift(task);
-      addLog('publish', `创建任务「${task.name}」，绑定 ${task.resourceIds.length} 条资源`, 'info');
+      addLog('publish', `创建任务「${task.name}」，绑定 ${task.resourceUrls.length} 条资源`, 'info');
       await save('tasks', 'logs');
       broadcast();
       await publish.startTask(task.id);
@@ -234,7 +260,11 @@ async function handleMessage(msg, sender) {
 
     // 资源库：直接读 IndexedDB analysis 表，取命中结论（ready/captcha，验证码资源也算命中）的记录（不经内存态）
     case 'getLibraryResources': {
-      const rows = await idbGetAll('analysis').catch(() => []);
+      const [rows, published] = await Promise.all([
+        idbGetAll('analysis').catch(() => []),
+        idbGetAll('published').catch(() => []),
+      ]);
+      const publishedUrls = new Set(published.map((r) => r && r.url));
       const resources = rows
         .filter((r) => r && r.url && VALID_STATUSES.includes(r.status))
         .sort((a, b) => (b.checkedAt || 0) - (a.checkedAt || 0)) // 新命中的在前
@@ -244,38 +274,41 @@ async function handleMessage(msg, sender) {
           targetDomain: r.targetDomain,
           type: 'blog_comment',
           status: r.status,
+          enabled: r.enabled !== false, // 旧数据无该字段，默认启用
+          published: publishedUrls.has(r.url), // published 表有记录（任一目标网址）即视为已发布
           checkedAt: r.checkedAt,
         }));
       return { ok: true, resources };
     }
 
-    // 从资源库移除一条：删 analysis 记录（资源库不再显示）+ 资源表里的对应记录
-    case 'deleteLibraryRow': {
-      if (msg.targetDomain && msg.url) {
-        await idbDelete('analysis', [msg.targetDomain, msg.url]).catch(() => {});
+    // 资源启用/停用：只改 analysis 记录的 enabled 标记，数据保留（删了下次分析会重跑一遍）
+    // keys: [[targetDomain, url], ...]，单条与批量（总开关）共用
+    case 'setLibraryEnabled': {
+      const keys = Array.isArray(msg.keys) ? msg.keys : [];
+      const enabled = msg.enabled !== false;
+      const want = new Set(keys.map(([d, u]) => `${d} ${u}`));
+      const rows = await idbGetAll('analysis').catch(() => []);
+      const dirty = rows
+        .filter((r) => r && r.url && want.has(`${r.targetDomain} ${r.url}`) && (r.enabled !== false) !== enabled)
+        .map((r) => ({ ...r, enabled }));
+      if (dirty.length) {
+        await idbPutAll('analysis', dirty).catch((e) =>
+          addLog('system', `资源启用状态写入失败：${e.message}`, 'warn'));
       }
-      await removeResourceByUrl(msg.url).catch(() => {});
       broadcast();
       return { ok: true, snapshot: await snapshot() };
     }
 
     case 'publishOne': {
-      // 单条立即发布：包装成一个临时任务
+      // 单条立即发布：包装成一个临时任务（资源直接用页面 URL，来自 analysis 表命中记录）
       const st = getState();
-      let res = msg.id ? await findResource(msg.id) : null;
-      if (!res && msg.url) res = await getResourceByUrl(msg.url);
-      if (!res && msg.url) {
-        // 资源库行直接来自 analysis 表，资源表里没有就先补建
-        await addResource({ url: msg.url, type: 'blog_comment' });
-        res = await getResourceByUrl(msg.url);
-      }
-      if (!res) return { ok: false, error: '资源不存在' };
+      if (!msg.url) return { ok: false, error: '资源不存在' };
       const task = {
         id: uid(),
         name: '单条发布',
         targetUrl: st.settings.identity.website || '',
         mode: st.settings.publishMode || 'semi',
-        resourceIds: [res.id],
+        resourceUrls: [msg.url],
         status: 'idle',
         results: {},
         createdAt: Date.now(),
@@ -347,7 +380,7 @@ async function handleMessage(msg, sender) {
     }
 
     case 'pub:decision': {
-      await publish.onDecision(msg.resourceId, msg.decision);
+      await publish.onDecision(msg.resourceUrl, msg.decision);
       return { ok: true };
     }
 

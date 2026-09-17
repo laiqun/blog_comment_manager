@@ -1,6 +1,8 @@
 /**
  * 内存版 IndexedDB 最小桩：只为让 idb.js 的逻辑能在 Node 里跑，非浏览器模拟。
- * 支持 idb.js 用到的 put / get / getAll(范围) / delete / clear，复合主键按数组字典序比较。
+ * 支持 idb.js 用到的 put / get / getAll(范围) / delete / clear，复合主键按数组字典序比较；
+ * 升级路径用到的 createObjectStore / deleteObjectStore / req.transaction 也覆盖。
+ * 返回内部 stores 表，便于测试在 open 之前预置「旧版本」数据（如 v1 的 resources 表）。
  */
 export function installIdbStub() {
   const keyOf = (k) => (Array.isArray(k) ? JSON.stringify(k) : String(k));
@@ -60,12 +62,18 @@ export function installIdbStub() {
   };
   const db = {
     objectStoreNames: { contains: (n) => stores.has(n) },
-    createObjectStore: (name, opts) => { stores.set(name, { keyPath: opts.keyPath, rows: new Map() }); },
+    createObjectStore: (name, opts) => {
+      stores.set(name, { keyPath: opts.keyPath, rows: new Map() });
+      return mkStore(name);
+    },
+    deleteObjectStore: (name) => { stores.delete(name); },
     transaction: (name) => ({ objectStore: () => mkStore(name) }),
   };
   globalThis.indexedDB = {
     open() {
       const r = {};
+      // 升级事务句柄：onupgradeneeded 里通过 req.transaction.objectStore 读旧表
+      r.transaction = { objectStore: (n) => mkStore(n) };
       queueMicrotask(() => {
         r.result = db;
         r.onupgradeneeded && r.onupgradeneeded();
@@ -75,4 +83,5 @@ export function installIdbStub() {
     },
   };
   globalThis.IDBKeyRange = { bound: (lower, upper) => ({ lower, upper }) };
+  return stores; // 预置旧版本数据用
 }

@@ -6,9 +6,9 @@
  * 4. 「开始分析」单独触发：数据集逐条访问 → 分析器采集 → 规则判定（登录/表单/验证码）→ 命中入库
  * 5. 评论区提取评论者网站作为滚雪球种子
  */
-import { getState, save, addLog, addResource, updateResourceByUrl } from '../lib/storage.js';
+import { getState, save, addLog } from '../lib/storage.js';
 import { PROVIDERS, ANALYZE_SELECTORS, LOGIN_HINTS, LIMITS } from '../lib/config.js';
-import { idbPutAll, idbPut, idbGetDomain } from '../lib/idb.js';
+import { idbPutAll, idbPut, idbGet, idbGetDomain } from '../lib/idb.js';
 import { waitTabComplete, sleep, hostMatches } from '../lib/util.js';
 
 export class CollectController {
@@ -460,7 +460,8 @@ export class CollectController {
       const data = res && res.result;
       if (!data || !data.ok) throw new Error((data && data.error) || '分析器无返回（页面可能被反爬拦截）');
 
-      // 规则判定：要登录 → 跳过；无评论表单 → 不入库；有表单 → 入库（有验证码标记状态）
+      // 规则判定：要登录 → 跳过；无评论表单 → 不入库；有表单 → 命中（有验证码标记状态）
+      // 可用资源 = analysis 表里命中结论的记录，不再单独写 resources 表
       if (data.loginRequired) {
         await this.recordAnalysis(cs.targetDomain, url, 'login', '页面要求登录后才能评论');
         addLog('collect', '页面要求登录后才能评论，跳过', 'info', url);
@@ -471,14 +472,10 @@ export class CollectController {
         addLog('collect', '未找到评论表单，不匹配', 'info', url);
         return;
       }
-      const r = await addResource({ url, type: 'blog_comment' });
-      if (r) {
-        cs.matched += 1;
-        if (data.hasCaptcha) await updateResourceByUrl(url, { status: 'captcha' });
-        await this.recordAnalysis(cs.targetDomain, url, data.hasCaptcha ? 'captcha' : 'ready',
-          data.hasCaptcha ? '命中，有验证码' : '命中，可发布');
-        addLog('collect', `命中博客评论资源（评论表单=有${data.hasCaptcha ? '，验证码=有' : ''}）`, 'success', url);
-      }
+      cs.matched += 1;
+      await this.recordAnalysis(cs.targetDomain, url, data.hasCaptcha ? 'captcha' : 'ready',
+        data.hasCaptcha ? '命中，有验证码' : '命中，可发布');
+      addLog('collect', `命中博客评论资源（评论表单=有${data.hasCaptcha ? '，验证码=有' : ''}）`, 'success', url);
     } catch (e) {
       // 任何异常：中断当前页加载，按无效资源记录原因，再抛给外层计入「已分析」
       await chrome.tabs.update(tabId, { url: 'about:blank' }).catch(() => {});
@@ -487,10 +484,11 @@ export class CollectController {
     }
   }
 
-  /** 分析结论写入 IndexedDB（失败只告警，不影响主流程） */
+  /** 分析结论写入 IndexedDB（失败只告警，不影响主流程）；保留已有记录的 enabled 启停标记 */
   async recordAnalysis(domain, url, status, reason) {
     try {
-      await idbPut('analysis', { targetDomain: domain, url, status, reason, checkedAt: Date.now() });
+      const old = await idbGet('analysis', [domain, url]).catch(() => null);
+      await idbPut('analysis', { ...(old || {}), targetDomain: domain, url, status, reason, checkedAt: Date.now() });
     } catch (e) {
       addLog('collect', `IndexedDB 分析记录写入失败：${e.message}`, 'warn', url);
     }

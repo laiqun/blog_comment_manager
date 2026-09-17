@@ -34,8 +34,8 @@ extension/
 │   └── publisher.js         # window.__BCM_PUB__：detect/fill/submit/cleanup + Comment Ready 浮层（IIFE，非 ESM）
 ├── lib/
 │   ├── config.js            # ★ 所有「待联调」的选择器、URL 模板、默认值集中在这里，联调只改这个文件
-│   ├── storage.js           # chrome.storage.local 内存镜像 + 资源/任务/日志操作 + 旧数据迁移
-│   ├── idb.js               # IndexedDB 轻量封装（库 bcm-idb，stores: backlinks / analysis / resources）
+│   ├── storage.js           # chrome.storage.local 内存镜像 + 任务/日志操作 + 旧数据迁移（资源数据全在 IDB）
+│   ├── idb.js               # IndexedDB 轻量封装（库 bcm-idb v2，stores: backlinks / analysis / published）
 │   ├── openrouter.js        # OpenRouter 客户端 + 四个 AI 角色（classify/formDetect/commentGen/discover）
 │   ├── i18n.js              # 中/英字典（MESSAGES）+ applyI18n
 │   └── util.js              # URL 处理、CSV（带 BOM）、tab 等待等纯函数
@@ -50,7 +50,7 @@ test/                        # Node 自带 node:test 单测（见下）
 
 - **持久化分两层**：
   - `chrome.storage.local`（key `bcm_store`）存小状态：settings / collectState / tasks / activeTaskId / publishRuntime / logs。`lib/storage.js` 的 `state` 是它的内存镜像，**变更后必须 `save(...keys)`**；`save` 是合并写入（先 get 再展开），不要绕过它直接写 storage。
-  - **IndexedDB（`bcm-idb`）是大数据表的唯一持久层**，不进 chrome.storage、不进内存态：`backlinks`（主键 `[targetDomain, url]`）、`analysis`（同主键）、`resources`（主键 `[url]`，单字段也要传数组）。资源库 UI 直读 `analysis` 表（`reason === '命中，可发布'`）。旧版双写数据由 `storage.js` 里的一次性迁移函数搬到 IDB。
+  - **IndexedDB（`bcm-idb` v2）是大数据表的唯一持久层**，不进 chrome.storage、不进内存态：`backlinks`（主键 `[targetDomain, url]`）、`analysis`（同主键；命中结论 ready/captcha 的记录即「可用资源」，含 `enabled` 启停标记，默认启用）、`published`（已发过的外链，主键 `[url, targetUrl]`，发布成功时写入）。任务通过 `resourceUrls`（资源页面 URL 列表）绑定资源，发布前跳过同 `[url, targetUrl]` 已发布的页面。资源库 UI 直读 `analysis` 表；v1 的 `resources` 表已废弃（升级时已发布记录自动迁入 `published` 后删表），旧版 chrome.storage 双写的 backlinks 由 `storage.js` 里的一次性迁移函数搬到 IDB。
 - **MV3 service worker 随时被回收**：所有状态落盘后才能丢；`chrome.alarms`（`bcm-tick`，30 秒）负责唤醒续跑收集/发布队列，并把回收途中卡住的 `stopping` 状态收尾为 `idle`；`onInstalled`/`onStartup` 做断点续跑。
 - **UI ↔ 后台通信**：sidepanel 用 `sendMessage` RPC（`getSnapshot`、`startCollect`、`createTask`、`setSettings` 等）；后台状态推送走 `chrome.runtime.sendMessage` 单向广播（`stateChanged` 快照），**不用 port 长连接**——无连接状态，SW 回收重启后新实例照样送达，面板关着时静默丢弃、打开时由 `init()` 的 `getSnapshot` 追平。**设置的唯一写入口是 `setSettings` 消息**，options 页也不得直接写 storage（会被后台内存态覆盖）。
 - **收集统计口径**：空闲时（`getSnapshot` 触发，3 秒去抖）从 IndexedDB 重新计算已发现/已分析/队列中/命中（见 `service-worker.js` 的 `refreshCollectStatsFromIdb`）。
@@ -62,7 +62,7 @@ test/                        # Node 自带 node:test 单测（见下）
 无构建步骤。测试用 Node 自带 runner，零依赖：
 
 ```bash
-# 在仓库根目录运行全部测试（44 个用例）
+# 在仓库根目录运行全部测试（43 个用例）
 node --test test/*.test.mjs
 
 # 单个文件
@@ -75,7 +75,7 @@ node --test test/util.test.mjs
 
 - 测试在仓库根目录 `test/`，只测**纯函数与状态逻辑**，不模拟浏览器/DOM。
 - `test/stubs.mjs` 提供共享的内存版 IndexedDB 最小桩；个别测试文件内还有几行的 `chrome.storage` / `fetch` 桩（内存 Map / 假响应），只为让纯逻辑能跑，不是浏览器模拟。
-- 已有覆盖：util（CSV/URL/域名匹配）、storage（资源去重/任务计数/日志上限/save 合并写）、openrouter（JSON 容错/分类归一化/Key 校验）、i18n（中英 key 对齐/插值）、config（「待联调项留空」契约）、service-worker（IDB 口径统计刷新/快照）、两条数据迁移（backlinks/resources → IDB）。
+- 已有覆盖：util（CSV/URL/域名匹配）、storage（任务计数/日志上限/save 合并写）、openrouter（JSON 容错/分类归一化/Key 校验）、i18n（中英 key 对齐/插值）、config（「待联调项留空」契约）、service-worker（IDB 口径统计刷新/快照资源派生/资源启停）、两条迁移（chrome.storage backlinks → IDB；IDB v1→v2 resources 已发布记录 → published）。
 - 新增纯逻辑时应同步加测试到对应 `test/*.test.mjs`；涉及 DOM/浏览器 API 的逻辑不进单测。
 
 ## 代码风格约定

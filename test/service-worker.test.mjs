@@ -106,14 +106,19 @@ test('getSnapshot：短时间内重复触发去抖，只刷新一次', async () 
   resetStatsRefreshDebounce();
 });
 
-test('getSnapshot：resources 直接读 IndexedDB（不经内存态），按 addedAt 新→旧', async () => {
-  await idbPutAll('resources', [
-    { id: 'r1', url: 'https://r.com/1', domain: 'r.com', type: 'blog_comment', status: 'ready', addedAt: 2, publishedAt: 0 },
-    { id: 'r2', url: 'https://r.com/2', domain: 'r.com', type: 'profile', status: 'captcha', addedAt: 3, publishedAt: 0 },
-  ]);
+test('getSnapshot：resources 由 analysis 命中记录派生（不经内存态），含 enabled/published 标记', async () => {
   const res = await sendMsg({ type: 'getSnapshot' });
-  assert.deepEqual(res.snapshot.resources.map((r) => r.url), ['https://r.com/2', 'https://r.com/1']);
+  const urls = res.snapshot.resources.map((r) => r.url).sort();
+  assert.deepEqual(urls, ['https://a.com/1', 'https://a.com/2']); // invalid 不入选
+  assert.ok(res.snapshot.resources.every((r) => r.enabled === true && r.published === false));
   assert.equal('resources' in getState(), false); // 内存态不存资源
+});
+
+test('getSnapshot：published 表有记录的 url 标记为已发布', async () => {
+  await idbPutAll('published', [{ url: 'https://a.com/1', targetUrl: 'https://me.com', taskId: 't1', publishedAt: 10 }]);
+  const res = await sendMsg({ type: 'getSnapshot' });
+  assert.equal(res.snapshot.resources.find((r) => r.url === 'https://a.com/1').published, true);
+  assert.equal(res.snapshot.resources.find((r) => r.url === 'https://a.com/2').published, false);
 });
 
 test('getLibraryResources：取 analysis 表中命中结论（ready/captcha）的记录', async () => {
@@ -125,18 +130,30 @@ test('getLibraryResources：取 analysis 表中命中结论（ready/captcha）�
   assert.equal(row.targetDomain, 'example.com');
   assert.equal(row.type, 'blog_comment');
   assert.equal(row.status, 'ready');
+  assert.equal(row.enabled, true); // 旧数据无 enabled 字段，默认启用
+  assert.equal(row.published, true); // 上个用例已把 a.com/1 写入 published 表
 });
 
-test('deleteLibraryRow：删掉 analysis 记录与同 url 资源，资源库不再返回该条', async () => {
-  await idbPutAll('resources', [
-    { id: 'r9', url: 'https://a.com/1', domain: 'a.com', type: 'blog_comment', status: 'ready', addedAt: 9, publishedAt: 0 },
-  ]);
-  const res = await sendMsg({ type: 'deleteLibraryRow', targetDomain: 'example.com', url: 'https://a.com/1' });
+test('setLibraryEnabled：停用只改标记不删数据，快照资源同步停用', async () => {
+  const res = await sendMsg({ type: 'setLibraryEnabled', keys: [['example.com', 'https://a.com/1']], enabled: false });
   assert.equal(res.ok, true);
   const lib = await sendMsg({ type: 'getLibraryResources' });
-  assert.equal(lib.resources.length, 1); // 只删掉被删的那条，captcha 命中的 a.com/2 仍在库中
-  assert.equal(lib.resources.some((r) => r.url === 'https://a.com/1'), false);
-  assert.equal(res.snapshot.resources.some((r) => r.url === 'https://a.com/1'), false); // 资源表同 url 记录一并清除
+  assert.equal(lib.resources.length, 2); // 数据保留，两条命中记录都还在
+  assert.equal(lib.resources.find((r) => r.url === 'https://a.com/1').enabled, false);
+  assert.equal(lib.resources.find((r) => r.url === 'https://a.com/2').enabled, true);
+  // 快照里的资源（建任务过滤用）同步为停用
+  assert.equal(res.snapshot.resources.find((r) => r.url === 'https://a.com/1').enabled, false);
+  assert.equal(res.snapshot.resources.find((r) => r.url === 'https://a.com/2').enabled, true);
+});
+
+test('setLibraryEnabled：批量启停（总开关）', async () => {
+  const keys = [['example.com', 'https://a.com/1'], ['example.com', 'https://a.com/2']];
+  await sendMsg({ type: 'setLibraryEnabled', keys, enabled: false });
+  let lib = await sendMsg({ type: 'getLibraryResources' });
+  assert.ok(lib.resources.every((r) => r.enabled === false));
+  await sendMsg({ type: 'setLibraryEnabled', keys, enabled: true });
+  lib = await sendMsg({ type: 'getLibraryResources' });
+  assert.ok(lib.resources.every((r) => r.enabled === true));
 });
 
 test('alarm：SW 回收后卡住的 stopping 状态被收尾为 idle', async () => {

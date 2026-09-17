@@ -111,7 +111,10 @@
         <button class="chip" data-status="failed" data-i18n="st_failed">失败</button>
         <button class="chip" data-status="captcha" data-i18n="st_captcha">有验证码</button>
       </div>
-      <div class="count-line" id="res-count">共 0 条资源</div>
+      <div class="count-row">
+        <div class="count-line" id="res-count">共 0 条资源</div>
+        <input type="checkbox" id="res-toggle-all" data-i18n-title="resToggleAll" title="启用全部 / 停用全部">
+      </div>
       <div id="res-list" class="res-list"></div>
       <div class="empty" id="res-empty" data-i18n="noResources">暂无资源</div>
       <button id="btn-export-csv" class="btn btn-outline btn-block" data-i18n="exportCSV">导出 CSV</button>

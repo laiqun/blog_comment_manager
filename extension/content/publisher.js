@@ -147,7 +147,7 @@
 
       lastFill = {
         submitSel: form.submit || '',
-        resourceId: cfg.resourceId || null,
+        resourceUrl: cfg.resourceUrl || null,
         mode: cfg.mode || 'semi',
         submitFound: !!submitBtn,
       };
@@ -201,9 +201,9 @@
     skipBtn.addEventListener('mouseleave', () => (skipBtn.style.background = '#374151'));
 
     function decide(decision) {
-      const rid = lastFill && lastFill.resourceId;
+      const rurl = lastFill && lastFill.resourceUrl;
       cleanup();
-      if (rid) chrome.runtime.sendMessage({ type: 'pub:decision', resourceId: rid, decision }).catch(() => {});
+      if (rurl) chrome.runtime.sendMessage({ type: 'pub:decision', resourceUrl: rurl, decision }).catch(() => {});
     }
 
     row.appendChild(skipBtn);

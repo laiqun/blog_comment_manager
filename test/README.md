@@ -6,20 +6,20 @@
 | 文件 | 覆盖内容 |
 |------|---------|
 | `util.test.mjs` | URL 深度抽取、评论者站点提取、CSV（转义/BOM）、域名匹配、时间格式化 |
-| `storage.test.mjs` | 资源去重/增删改（IndexedDB 唯一持久层）、任务计数（含待审核）、日志上限、save 序列化（内存版 chrome.storage 桩） |
+| `storage.test.mjs` | 任务计数（含待审核）、日志上限、save 序列化（内存版 chrome.storage 桩） |
 | `openrouter.test.mjs` | 无 Key 报错、JSON 解析容错（脏输出提取）、classifyPage 结果归一化、模型角色映射、Key 校验（fetch 桩） |
 | `i18n.test.mjs` | 中英字典 key 对齐、参数插值、语言切换 |
 | `config.test.mjs` | 默认模型/数据源结构、「待联调项留空」契约 |
-| `service-worker.test.mjs` | getSnapshot 时按 IndexedDB 口径刷新收集统计（已发现/已分析/队列中/命中），运行中不刷新，targetDomain 丢失时从 IDB 恢复；快照 resources 直读 IDB；资源库读 analysis 表与删除（内存版 chrome.* + IndexedDB 桩） |
+| `service-worker.test.mjs` | getSnapshot 时按 IndexedDB 口径刷新收集统计（已发现/已分析/队列中/命中），运行中不刷新，targetDomain 丢失时从 IDB 恢复；快照 resources 由 analysis 命中记录派生（enabled/published 标记）；资源库读 analysis 表与启停开关（内存版 chrome.* + IndexedDB 桩） |
 | `migrate-backlinks.test.mjs` | 旧版 chrome.storage backlinks 一次性迁移到 IndexedDB（补齐缺失的 targetDomain、移除原字段）、save 不再写 backlinks |
-| `migrate-resources.test.mjs` | 旧版 chrome.storage resources 一次性迁移到 IndexedDB（唯一持久层、移除原字段）、save 不再写 resources |
-| `stubs.mjs` | 共享的内存版 IndexedDB 最小桩（put/get/getAll 范围/delete/clear，复合主键） |
+| `migrate-published.test.mjs` | IndexedDB v1→v2：旧 resources 表已发布记录迁入 published 表后删表，未发布记录不迁移 |
+| `stubs.mjs` | 共享的内存版 IndexedDB 最小桩（put/get/getAll 范围/delete/clear/建删 store，复合主键） |
 
 ## 运行
 
 ```bash
 # 在仓库根目录
-node --test test/
+node --test test/*.test.mjs
 ```
 
 单个文件：
