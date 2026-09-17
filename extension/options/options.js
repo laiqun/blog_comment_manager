@@ -29,7 +29,6 @@ function saveSettings() {
           openrouterKey: settings.openrouterKey,
           models: settings.models,
           identity: settings.identity,
-          publishMode: settings.publishMode,
           language: settings.language,
           summaryLang: settings.summaryLang,
           aiTimeoutMs: settings.aiTimeoutMs,
@@ -100,10 +99,7 @@ async function init() {
   bindField('#id-email', () => settings.identity.email, (v) => (settings.identity.email = v));
   bindField('#id-website', () => settings.identity.website, (v) => (settings.identity.website = v.trim()));
 
-  // 发布设置 + 语言
-  $('#publish-mode').value = settings.publishMode || 'semi';
-  $('#publish-mode').addEventListener('change', (e) => { settings.publishMode = e.target.value; saveSettings(); });
-
+  // 语言 / 摘要语言 / AI 超时
   $('#summary-lang').value = settings.summaryLang || 'zh';
   $('#summary-lang').addEventListener('change', (e) => { settings.summaryLang = e.target.value; saveSettings(); });
 

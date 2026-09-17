@@ -1,22 +1,17 @@
 /**
  * 轻量 i18n：中/英双语字典，语言偏好存于 settings.language。
- * popup / options 通过 ES module 引入；content script 的文案由 background 下发或内置双语字典。
+ * sidepanel / options 通过 ES module 引入；content 脚本为纯无 UI 页面操作，不含界面文案。
  */
 
 export const MESSAGES = {
   // ---- 通用 ----
   appName: { zh: '博客评论外链管理器', en: 'Blog Comment Backlink Manager' },
-  cancel: { zh: '取消', en: 'Cancel' },
-  confirm: { zh: '确定', en: 'OK' },
-  save: { zh: '保存', en: 'Save' },
   delete: { zh: '删除', en: 'Delete' },
-  close: { zh: '关闭', en: 'Close' },
-  confirmClearData: { zh: '确定要清空所有本地数据吗？（资源库/任务/日志/设置全部删除）', en: 'Clear ALL local data? (resources, tasks, logs and settings will be removed)' },
+  confirmClearData: { zh: '确定要清空所有本地数据吗？（资源库/模板/日志/设置全部删除）', en: 'Clear ALL local data? (resources, templates, logs and settings will be removed)' },
   saved: { zh: '已保存', en: 'Saved' },
 
   // ---- Tab ----
   tab_collect: { zh: '收集', en: 'Collect' },
-  tab_publish: { zh: '发布', en: 'Publish' },
   tab_logs: { zh: '日志', en: 'Logs' },
   tab_library: { zh: '资源库', en: 'Library' },
 
@@ -49,60 +44,22 @@ export const MESSAGES = {
   seedHint: { zh: '条同行种子域名（可回炉再收集）', en: 'peer seed domains (can be re-collected)' },
   matchedHint: { zh: '命中的博客评论资源已存入「资源库」Tab', en: 'Matched comment-blog resources are saved to the Library tab' },
 
-  // ---- 发布 ----
-  publishTasks: { zh: '发布任务', en: 'Publish Tasks' },
-  newTask: { zh: '+ 新建任务', en: '+ New Task' },
-  stat_total: { zh: '总计', en: 'Total' },
-  stat_success: { zh: '成功', en: 'Success' },
-  stat_pending: { zh: '待审核', en: 'Pending' },
-  stat_failed: { zh: '失败', en: 'Failed' },
-  stat_remaining: { zh: '剩余', en: 'Remaining' },
-  statusPublishing: { zh: '正在发布...', en: 'Publishing...' },
-  statusWaiting: { zh: '等待人工确认（请在目标网页浮层上操作）...', en: 'Waiting for review (use the overlay on the page)...' },
-  noTasks: { zh: '暂无任务，点击右上角「+ 新建任务」创建', en: 'No tasks yet. Click "+ New Task"' },
-  taskStop: { zh: '停止任务', en: 'Stop task' },
-  taskDetail: { zh: '查看明细', en: 'View details' },
-  taskEdit: { zh: '编辑任务', en: 'Edit task' },
-  taskDelete: { zh: '删除任务', en: 'Delete task' },
-  taskDone: { zh: '已完成', en: 'Done' },
-  taskStopped: { zh: '已停止', en: 'Stopped' },
-  taskRunning: { zh: '运行中', en: 'Running' },
-
-  // 新建/编辑任务弹窗
-  titleCreateTask: { zh: '新建发布任务', en: 'New Publish Task' },
-  titleEditTask: { zh: '编辑发布任务', en: 'Edit Publish Task' },
+  // ---- 助手页「当前任务」配置（原发布任务的可复用部分，模板存 IndexedDB templates 表）----
+  asstTask: { zh: '当前任务', en: 'Current Task' },
+  asstExpand: { zh: '展开', en: 'Expand' },
+  asstCollapse: { zh: '收起', en: 'Collapse' },
   taskName: { zh: '任务名称', en: 'Task Name' },
   targetUrl: { zh: '目标地址（用于评论正文内嵌链接）', en: 'Target URL (linked in comment body)' },
-  siteIntro: { zh: '网站介绍（一两句，供 AI 判断相关性）', en: 'Site Intro (1-2 sentences, for AI relevance check)' },
+  siteIntro: { zh: '网站介绍（一两句，供 AI 生成评论）', en: 'Site Intro (1-2 sentences, for AI comment generation)' },
   siteIntroPh: { zh: '例：Sprunki Game 是一个免费的音乐混音小游戏网站，玩家把角色拖到 beat 上创作音乐。', en: 'e.g. Sprunki Game is a free music-mixing game site where players drag characters onto a beat.' },
   mainKeyword: { zh: '主关键词（AI 做同义词/前后缀变体作锚文本）', en: 'Main Keyword (AI varies it for anchor text)' },
   mainKeywordPh: { zh: '例：sprunki', en: 'e.g. sprunki' },
-  publishMode: { zh: '发布模式', en: 'Publish Mode' },
-  modeSemi: { zh: '半自动（填表后人工确认提交）', en: 'Semi-auto (review before submit)' },
-  modeAuto: { zh: '全自动（直接提交，不审核）', en: 'Fully auto (submit directly)' },
-  resourceScope: { zh: '资源范围', en: 'Resource Scope' },
-  scopeReady: { zh: '全部「可发布」资源', en: 'All "ready" resources' },
-  scopeSingle: { zh: '仅当前资源（1 条）', en: 'Current resource only (1)' },
-  btnCreate: { zh: '创建并运行', en: 'Create & Run' },
-  btnSave: { zh: '保存', en: 'Save' },
-  noReadyResources: { zh: '资源库中没有「可发布」资源，请先收集', en: 'No "ready" resources. Collect first' },
-
-  // 任务模板（IndexedDB templates 表）
-  tplLabel: { zh: '模板', en: 'Template' },
   tplSelect: { zh: '选择模板填充…', en: 'Fill from template…' },
   tplSave: { zh: '存为模板', en: 'Save as template' },
   tplNamePrompt: { zh: '模板名称', en: 'Template name' },
   tplOverwrite: { zh: '已存在同名模板「{name}」，覆盖它？', en: 'Template "{name}" exists. Overwrite?' },
   tplSaved: { zh: '模板已保存', en: 'Template saved' },
   tplDeleted: { zh: '模板已删除', en: 'Template deleted' },
-
-  // 任务明细弹窗
-  titleTaskDetail: { zh: '任务明细', en: 'Task Details' },
-  detailSuccess: { zh: '成功', en: 'Success' },
-  detailSkip: { zh: '跳过', en: 'Skipped' },
-  detailFail: { zh: '失败', en: 'Failed' },
-  detailCaptcha: { zh: '验证码', en: 'Captcha' },
-  detailWaiting: { zh: '待处理', en: 'Pending' },
 
   // ---- 日志 ----
   logsTitle: { zh: '运行日志', en: 'Activity Logs' },
@@ -127,13 +84,12 @@ export const MESSAGES = {
   exportCSV: { zh: '导出 CSV', en: 'Export CSV' },
   exportBacklinks: { zh: '导出收集数据 (CSV)', en: 'Export collected (CSV)' },
   noResources: { zh: '暂无资源，去「收集」Tab 发现外链资源', en: 'No resources yet. Go to the Collect tab' },
-  resOpen: { zh: '打开链接', en: 'Open link' },
-  resPublish: { zh: '立即发布', en: 'Publish now' },
+  resOpen: { zh: '打开链接（新标签页）', en: 'Open link (new tab)' },
+  resPublish: { zh: '在当前标签页打开该资源，到「助手」页发布', en: 'Open in the active tab and publish from the Assistant tab' },
   resEnable: { zh: '启用 / 停用', en: 'Enable / disable' },
   resToggleAll: { zh: '启用全部 / 停用全部', en: 'Enable / disable all' },
   logSwitch: { zh: '记录日志', en: 'Logging' },
   logSwitchTitle: { zh: '开启后记录运行日志，关闭则直接丢弃', en: 'When off, new logs are discarded' },
-  singleTaskName: { zh: '单条发布', en: 'Single publish' },
 
   // ---- 设置页 ----
   optionsTitle: { zh: '博客评论外链管理器 - 设置', en: 'Blog Comment Backlink Manager - Settings' },
@@ -156,17 +112,54 @@ export const MESSAGES = {
   idName: { zh: '昵称', en: 'Name' },
   idEmail: { zh: '邮箱', en: 'Email' },
   idWebsite: { zh: '网址（默认落地链接）', en: 'Website (default target link)' },
-  publishCardTitle: { zh: '发布设置', en: 'Publish Settings' },
-  publishModeLabel: { zh: '默认发布模式', en: 'Default Publish Mode' },
+  generalCardTitle: { zh: '通用设置', en: 'General' },
   languageLabel: { zh: '界面语言', en: 'UI Language' },
   summaryLangLabel: { zh: '标题与摘要语言', en: 'Title & Summary Language' },
   aiTimeoutLabel: { zh: 'AI 请求超时（秒）', en: 'AI Request Timeout (s)' },
 
-  // ---- 发布浮层（content script）----
-  overlayTitle: { zh: 'Comment Ready', en: 'Comment Ready' },
-  overlayBody: { zh: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。', en: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.' },
-  overlaySkip: { zh: 'Skip', en: 'Skip' },
-  overlaySubmit: { zh: 'Submit', en: 'Submit' },
+  // ---- 助手页（发布主操作台：对当前激活标签页执行步骤，任务配置 = 顶部「当前任务」）----
+  tab_assistant: { zh: '助手', en: 'Assistant' },
+  asstCurrentUrl: { zh: '当前资源（当前激活标签页）', en: 'Current resource (active tab)' },
+  asstNoPage: { zh: '当前标签页不是可操作的网页，请先打开一个博客页面', en: 'The active tab is not an operable web page — open a blog page first' },
+  asstNext: { zh: '换一个（在当前标签页打开未发布资源）', en: 'Pick next (open an unpublished resource in this tab)' },
+  asstNoMore: { zh: '资源库中没有未发布过的资源了', en: 'No unpublished resources left in the library' },
+  asstCaptcha: { zh: '检测到验证码（已标记资源）：可在页面中手动完成验证后继续执行步骤', en: 'Captcha detected (resource flagged): solve it on the page, then continue with the steps' },
+  asstLogin: { zh: '该站可能需要登录才能评论', en: 'This site may require login to comment' },
+  asstNoForm: { zh: '未自动找到评论表单：可人工定位表单后点「AI 识别评论表单」重试，或「AI 生成评论」后复制手动粘贴', en: 'No comment form found: locate it manually and retry "AI detect form", or copy a generated comment and paste it yourself' },
+  asstAlreadyPublished: { zh: '提示：该页面已发布过当前目标链接，注意避免重复评论', en: 'Note: this page already has your target link published — avoid duplicate comments' },
+  asstSubmitted: { zh: '✓ 已提交。可点「换一个」继续下一条未发布资源', en: '✓ Submitted. Click "Pick next" to continue with another unpublished resource' },
+  asstSkipped: { zh: '已跳过。可点「换一个」继续下一条', en: 'Skipped. Click "Pick next" to continue' },
+  stepSummarize: { zh: '获取标题与摘要', en: 'Get title & summary' },
+  stepDetect: { zh: 'AI 识别评论表单', en: 'AI detect form' },
+  stepGen: { zh: 'AI 生成评论', en: 'AI generate comment' },
+  stepFill: { zh: '自动填写表单', en: 'Auto fill form' },
+  asstSummarizing: { zh: 'AI 正在生成标题与摘要…', en: 'AI is generating the title & summary…' },
+  asstDetecting: { zh: '正在识别评论表单…', en: 'Detecting the comment form…' },
+  asstGenerating: { zh: 'AI 正在生成评论…', en: 'AI is generating the comment…' },
+  asstFilling: { zh: '正在自动填写表单…', en: 'Filling the comment form…' },
+  asstSumDone: { zh: '标题与摘要已生成，显示在下方，可复制。', en: 'Title & summary generated below — copyable.' },
+  asstFormDone: { zh: '表单识别完成，已在页面上蓝色高亮目标表单。', en: 'Form detected and highlighted on the page.' },
+  asstCommentDone: { zh: '评论已生成。不满意可再点「AI 生成评论」换一条，满意后点「自动填写表单」。', en: 'Comment generated. Click "AI generate comment" again for a new one, or "Auto fill form" to continue.' },
+  asstReady: { zh: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。', en: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.' },
+  asstManual: { zh: '操作对象是当前激活的标签页。「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」互不依赖，可任意顺序执行；评论不满意可再点一次重新生成，满意后点「自动填写表单」。', en: 'Steps act on the active tab. "Get title & summary", "AI generate comment" and "AI detect form" are independent — run them in any order. Not happy with the comment? Click again for a new one, then "Auto fill form".' },
+  asstLocate: { zh: '定位目标链接', en: 'Locate target link' },
+  asstLocating: { zh: '正在定位…', en: 'Locating…' },
+  asstNoTarget: { zh: '未找到该资源对应的收集目标域名', en: 'No collect target domain found for this resource' },
+  asstNoLink: { zh: '页面中未找到指向目标域名的链接', en: 'No link pointing to the target domain was found on this page' },
+  asstLocated: { zh: '已定位到第 {n}/{m} 个目标链接', en: 'Jumped to target link {n}/{m}' },
+  asstSubmit: { zh: 'Submit', en: 'Submit' },
+  asstSkip: { zh: 'Skip', en: 'Skip' },
+  fieldComment: { zh: '评论内容', en: 'Comment' },
+  fieldTranslation: { zh: '评论译文（仅供参考，不填入表单）', en: 'Translation (reference only, not filled)' },
+  fieldName: { zh: '昵称', en: 'Name' },
+  fieldEmail: { zh: '邮箱', en: 'Email' },
+  fieldTitle: { zh: '标题', en: 'Title' },
+  fieldSummary: { zh: '摘要', en: 'Summary' },
+  fieldLang: { zh: '文章语言', en: 'Article language' },
+  copy: { zh: '复制', en: 'Copy' },
+  copied: { zh: '已复制 ✓', en: 'Copied ✓' },
+  asstStepNoResp: { zh: '请求超时或后台无响应，可直接再点一次重试。', en: 'Request timed out or no response from background — just click again to retry.' },
+  asstStepNeedComment: { zh: '请先生成评论，再执行「自动填写表单」', en: 'Generate a comment first, then "Auto fill form"' },
 };
 
 let _lang = 'zh';

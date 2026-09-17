@@ -1,5 +1,9 @@
 /**
- * Popup：四 Tab（收集/发布/日志/资源库）+ 页脚 + 任务弹窗。
+ * 侧边栏：四 Tab（收集/助手/日志/资源库）+ 页脚。
+ * 「助手」Tab 是发布主操作台：顶部「当前任务」配置（可从模板选择/存为模板/删除模板），
+ * 步骤按钮、字段展示与复制、定位目标链接、Submit/Skip、「换一个」——全部作用于浏览器
+ * 当前激活的标签页；AI 步骤的运行结果来自 snapshot.publish（后台 publishRuntime 的投影），
+ * 面板按 publish.resourceUrl 与当前激活标签页 URL 是否一致决定字段区与 Submit/Skip 是否生效。
  * 与 background 通过 sendMessage(RPC) + stateChanged 广播推送交互。
  */
 import { setLanguage, t, applyI18n } from '../lib/i18n.js';
@@ -11,6 +15,8 @@ let snap = null;
 const filters = { type: 'all', status: null };
 // 资源库列表：点击「资源库」Tab 时从 IndexedDB analysis 表加载（不经快照内存态）
 let libraryRows = null;
+// 当前激活标签页 URL（助手页的默认操作对象；仅 http/https 可注入）
+let activeTabUrl = '';
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -54,9 +60,9 @@ function applySnapshot(s) {
 function render() {
   if (!snap) return;
   renderCollect();
-  renderPublish();
   renderLogs();
   renderLibrary();
+  renderAssistant();
 }
 
 /* ---- 收集 ---- */
@@ -110,59 +116,6 @@ function renderCollect() {
     seedEl.textContent = `❄ ${c.seeds} ${t('seedHint')}`;
   } else {
     seedEl.hidden = true;
-  }
-}
-
-/* ---- 发布 ---- */
-function renderPublish() {
-  const list = $('#task-list');
-  const tasks = snap.tasks || [];
-  $('#tasks-empty').hidden = tasks.length > 0;
-  $('#tasks-empty').style.display = tasks.length ? 'none' : '';
-
-  list.innerHTML = tasks.map((task) => {
-    const c = task.counts;
-    const running = task.status === 'running';
-    const statusBadge = running ? t('taskRunning') : task.status === 'done' ? t('taskDone') : t('taskStopped');
-    const modeLabel = task.mode === 'auto' ? 'AUTO' : 'SEMI';
-    return `
-      <div class="task-card ${running ? 'running' : ''}">
-        <div class="task-top">
-          <span class="task-name">${esc(task.name)}</span>
-          <span class="task-url">${esc(task.targetUrl || '—')}</span>
-          <span class="task-mode">${modeLabel}</span>
-        </div>
-        <div class="task-mid">
-          <span class="ok">✓ <b>${c.success}</b></span>
-          <span class="fail">✗ <b>${c.failed}</b></span>
-          <span>⊘ <b>${c.skipped}</b></span>
-          <span>${t('stat_remaining')}: <b>${c.remaining}</b></span>
-          <span style="margin-left:auto;color:var(--text-faint)">${statusBadge}</span>
-        </div>
-        <div class="task-actions">
-          <button class="icon-btn stop" data-act="stop" data-id="${task.id}" ${running ? '' : 'disabled'} title="${t('taskStop')}">⏹</button>
-          <button class="icon-btn" data-act="detail" data-id="${task.id}" title="${t('taskDetail')}">☰</button>
-          <button class="icon-btn" data-act="edit" data-id="${task.id}" ${running ? 'disabled' : ''} title="${t('taskEdit')}">✏</button>
-          <button class="icon-btn danger" data-act="delete" data-id="${task.id}" title="${t('taskDelete')}">✕</button>
-        </div>
-      </div>`;
-  }).join('');
-
-  // 运行状态卡片
-  const active = tasks.find((x) => x.id === snap.activeTaskId) || tasks.find((x) => x.status === 'running');
-  const card = $('#publish-card');
-  if (active) {
-    card.hidden = false;
-    const c = active.counts;
-    const waiting = snap.publish && snap.publish.stage === 'awaiting_review';
-    $('#publish-phase').textContent = waiting ? t('statusWaiting') : t('statusPublishing');
-    $('#pt-total').textContent = c.total;
-    $('#pt-success').textContent = c.success;
-    $('#pt-pending').textContent = c.pending;
-    $('#pt-failed').textContent = c.failed;
-    $('#pt-remaining').textContent = c.remaining;
-  } else {
-    card.hidden = true;
   }
 }
 
@@ -223,7 +176,7 @@ function renderLibrary() {
 
   const list = $('#res-list');
   $('#res-empty').style.display = rs.length ? 'none' : '';
-  // 最多渲染 200 条，避免 popup 卡顿
+  // 最多渲染 200 条，避免面板卡顿
   const view = rs.slice(0, 200);
   // 按目标域名分组（组间按域名字典序排列）
   const groups = new Map();
@@ -256,160 +209,214 @@ function renderLibrary() {
       }).join('')}`).join('');
 }
 
-// ================= 弹窗 =================
+/* ---- 助手（发布主操作台：操作对象 = 当前激活标签页）---- */
+let asstLastReview = false; // 上次是否处于待确认阶段：进入 awaiting_review 自动切到助手 Tab 时去重
+let asstStepBusy = null;    // 正在等待回包的步骤名（本地防重入；后台另有 stepBusy 并发去重）
+let asstWatchdog = 0;       // 步骤按钮看门狗计时器
+let asstTemplates = [];     // 模板缓存（IndexedDB templates 表）
+let asstTaskCollapsed = true;  // 「当前任务」详情折叠状态（默认收起，模板选择行不受影响）
+let asstTaskTouched = false;   // 用户手动折叠过则不再自动展开
 
-function openModal(html) {
-  $('#modal').innerHTML = html;
-  $('#modal-mask').hidden = false;
-}
-function closeModal() {
-  $('#modal-mask').hidden = true;
-  $('#modal').innerHTML = '';
+function activateTab(name) {
+  document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
+  if (name === 'library') loadLibrary();
 }
 
-function showCreateTaskModal(prefill = null, singleRes = null) {
-  const readyCount = (snap.resources || []).filter((r) => r.status === 'ready' && r.enabled !== false).length;
-  const isEdit = !!prefill;
-  if (!isEdit && !singleRes && readyCount === 0) {
-    toast(t('noReadyResources'), 'error');
-    return;
+/** 刷新当前激活标签页（助手页的操作对象），随后重渲染助手区 */
+async function refreshActiveTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    activeTabUrl = tab && /^https?:/.test(tab.url || '') ? tab.url : '';
+  } catch {
+    activeTabUrl = '';
   }
-  openModal(`
-    <h3>${t(isEdit ? 'titleEditTask' : singleRes ? 'resPublish' : 'titleCreateTask')}</h3>
-    <div class="form-row">
-      <label class="field-label">${t('tplLabel')}</label>
-      <div class="tpl-row">
-        <select id="m-tpl"><option value="">${t('tplSelect')}</option></select>
-        <button class="btn btn-ghost btn-sm" id="m-tpl-save">${t('tplSave')}</button>
-        <button class="btn btn-ghost btn-sm" id="m-tpl-del" disabled>${t('delete')}</button>
-      </div>
-    </div>
-    <div class="form-row">
-      <label class="field-label">${t('taskName')}</label>
-      <input type="text" id="m-name" value="${esc(prefill?.name || singleRes?.domain || '')}" placeholder="Canva" />
-    </div>
-    <div class="form-row">
-      <label class="field-label">${t('targetUrl')}</label>
-      <input type="text" id="m-url" value="${esc(prefill?.targetUrl || '')}" placeholder="https://www.canva.com/" />
-    </div>
-    <div class="form-row">
-      <label class="field-label">${t('siteIntro')}</label>
-      <textarea id="m-intro" rows="3" placeholder="${esc(t('siteIntroPh'))}">${esc(prefill?.siteIntro || '')}</textarea>
-    </div>
-    <div class="form-row">
-      <label class="field-label">${t('mainKeyword')}</label>
-      <input type="text" id="m-keyword" value="${esc(prefill?.mainKeyword || '')}" placeholder="${esc(t('mainKeywordPh'))}" />
-    </div>
-    <div class="form-row">
-      <label class="field-label">${t('publishMode')}</label>
-      <div class="mode-row">
-        <label><input type="radio" name="m-mode" value="semi" ${prefill?.mode !== 'auto' ? 'checked' : ''} /> ${t('modeSemi')}</label>
-        <label><input type="radio" name="m-mode" value="auto" ${prefill?.mode === 'auto' ? 'checked' : ''} /> ${t('modeAuto')}</label>
-      </div>
-    </div>
-    ${isEdit ? '' : singleRes ? `
-    <div class="form-row">
-      <label class="field-label">${t('resourceScope')}</label>
-      <select id="m-scope" disabled><option>${t('scopeSingle')}：${esc(singleRes.url)}</option></select>
-    </div>` : `
-    <div class="form-row">
-      <label class="field-label">${t('resourceScope')}</label>
-      <select id="m-scope" disabled><option>${t('scopeReady')} (${readyCount})</option></select>
-    </div>`}
-    <div class="btn-row">
-      <button class="btn btn-ghost" id="m-cancel">${t('cancel')}</button>
-      <button class="btn btn-primary" id="m-ok">${t(isEdit ? 'btnSave' : 'btnCreate')}</button>
-    </div>
-  `);
-  $('#m-cancel').addEventListener('click', closeModal);
-
-  // ---- 任务模板（存 IndexedDB）：选择填充 / 存为模板（同名覆盖即编辑）/ 删除 ----
-  const tplSel = $('#m-tpl');
-  const tplDelBtn = $('#m-tpl-del');
-  let templates = [];
-  const fillTplOptions = (list, selected) => {
-    templates = list || [];
-    tplSel.innerHTML = `<option value="">${t('tplSelect')}</option>` +
-      templates.map((x) => `<option value="${esc(x.name)}" ${x.name === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
-    tplDelBtn.disabled = !tplSel.value;
-  };
-  send({ type: 'getTemplates' })
-    .then((res) => { if (res && res.templates) fillTplOptions(res.templates); })
-    .catch(() => {});
-  tplSel.addEventListener('change', () => {
-    tplDelBtn.disabled = !tplSel.value;
-    const tpl = templates.find((x) => x.name === tplSel.value);
-    if (!tpl) return;
-    $('#m-name').value = tpl.name || '';
-    $('#m-url').value = tpl.targetUrl || '';
-    $('#m-intro').value = tpl.siteIntro || '';
-    $('#m-keyword').value = tpl.mainKeyword || '';
-    const radio = document.querySelector(`input[name="m-mode"][value="${tpl.mode === 'auto' ? 'auto' : 'semi'}"]`);
-    if (radio) radio.checked = true;
-  });
-  $('#m-tpl-save').addEventListener('click', async () => {
-    const input = prompt(t('tplNamePrompt'), $('#m-name').value.trim() || tplSel.value);
-    const tplName = (input || '').trim();
-    if (!tplName) return;
-    if (templates.some((x) => x.name === tplName) && !confirm(t('tplOverwrite', { name: tplName }))) return;
-    const res = await send({
-      type: 'saveTemplate',
-      name: tplName,
-      targetUrl: $('#m-url').value.trim(),
-      siteIntro: $('#m-intro').value.trim(),
-      mainKeyword: $('#m-keyword').value.trim(),
-      mode: document.querySelector('input[name="m-mode"]:checked').value,
-    });
-    if (res && res.ok === false) return toast(res.error, 'error');
-    if (res && res.templates) fillTplOptions(res.templates, tplName);
-    toast(t('tplSaved'), 'success');
-  });
-  tplDelBtn.addEventListener('click', async () => {
-    const tplName = tplSel.value;
-    if (!tplName) return;
-    if (!confirm(`${t('delete')}「${tplName}」?`)) return;
-    const res = await send({ type: 'deleteTemplate', name: tplName });
-    if (res && res.templates) fillTplOptions(res.templates);
-    toast(t('tplDeleted'), 'success');
-  });
-
-  $('#m-ok').addEventListener('click', async () => {
-    const name = $('#m-name').value.trim() || '未命名任务';
-    const targetUrl = $('#m-url').value.trim();
-    const siteIntro = $('#m-intro').value.trim();
-    const mainKeyword = $('#m-keyword').value.trim();
-    const mode = document.querySelector('input[name="m-mode"]:checked').value;
-    if (isEdit) {
-      await act({ type: 'updateTask', id: prefill.id, name, targetUrl, siteIntro, mainKeyword, mode });
-    } else if (singleRes) {
-      // 单条立即发布：资源范围锁定为这一条
-      closeModal();
-      await act({ type: 'publishOne', url: singleRes.url, name, targetUrl, siteIntro, mainKeyword, mode });
-      return;
-    } else {
-      const urls = (snap.resources || []).filter((r) => r.status === 'ready' && r.enabled !== false).map((r) => r.url);
-      if (!urls.length) return toast(t('noReadyResources'), 'error');
-      closeModal();
-      await act({ type: 'createTask', name, targetUrl, siteIntro, mainKeyword, mode, resourceUrls: urls });
-    }
-    closeModal();
-  });
+  renderAssistant();
 }
 
-function showDetailModal(task) {
-  const statusLabel = { success: t('detailSuccess'), skip: t('detailSkip'), fail: t('detailFail'), captcha: t('detailCaptcha') };
-  const items = (task.resourceUrls || []).map((url) => {
-    const res = (snap.resources || []).find((r) => r.url === url);
-    const st = task.results[url] ? statusLabel[task.results[url]] || task.results[url] : t('detailWaiting');
-    const badge = res ? (res.published ? 'st-published' : 'st-' + res.status) : 'st-failed';
-    return `<div class="detail-item"><span class="badge ${badge}">${st}</span><span class="u" title="${esc(url)}">${esc(url)}</span></div>`;
-  }).join('');
-  openModal(`
-    <h3>${t('titleTaskDetail')} — ${esc(task.name)}</h3>
-    ${items || `<div class="empty">—</div>`}
-    <div class="btn-row"><button class="btn btn-ghost" id="m-cancel">${t('close')}</button></div>
-  `);
-  $('#m-cancel').addEventListener('click', closeModal);
+function renderAssistant() {
+  if (!snap) return;
+  const pub = snap.publish;
+  // 后台会话与当前激活标签页一致才算绑定：字段区/Submit/Skip 只对绑定页面生效
+  const bound = !!(pub && activeTabUrl && pub.resourceUrl === activeTabUrl);
+  const stage = bound ? pub.stage : null;
+
+  // 「当前任务」字段回填：仅在非聚焦时覆盖，避免打断输入
+  const at = snap.assistantTask || {};
+  const fillIfIdle = (sel, val) => {
+    const el = $(sel);
+    if (document.activeElement !== el && el.value !== (val || '')) el.value = val || '';
+  };
+  fillIfIdle('#at-name', at.name);
+  fillIfIdle('#at-url', at.targetUrl);
+  fillIfIdle('#at-intro', at.siteIntro);
+  fillIfIdle('#at-keyword', at.mainKeyword);
+
+  // 「当前任务」详情折叠：未配置任务时强制展开引导填写；收起时标题行显示任务名摘要
+  if (!asstTaskTouched && !at.name && !at.targetUrl) asstTaskCollapsed = false;
+  $('#asst-task-body').hidden = asstTaskCollapsed;
+  $('#asst-task-toggle').textContent = t(asstTaskCollapsed ? 'asstExpand' : 'asstCollapse');
+  const taskNameEl = $('#asst-task-name');
+  taskNameEl.hidden = !asstTaskCollapsed;
+  taskNameEl.textContent = at.name || at.targetUrl || '';
+  taskNameEl.title = at.targetUrl || '';
+
+  // 当前资源 = 当前激活标签页
+  $('#asst-url').textContent = activeTabUrl || t('asstNoPage');
+  $('#asst-url').title = activeTabUrl;
+
+  // 状态行：优先绑定会话的 uiStatus（key 走 i18n，text 直显），无则给默认引导
+  let status = '';
+  if (bound && pub.uiStatus) status = pub.uiStatus.key ? t(pub.uiStatus.key) : (pub.uiStatus.text || '');
+  if (!status) status = !activeTabUrl ? t('asstNoPage') : stage === 'awaiting_review' ? t('asstReady') : t('asstManual');
+  $('#asst-status').textContent = status;
+  $('#asst-dot').classList.toggle('idle', stage !== 'awaiting_review');
+
+  // 步骤按钮：激活标签页是可注入网页即可点、可反复触发；
+  // 「自动填写表单」需评论已生成（绑定会话的 manual.comment）；本地 busy 中的步骤临时置灰防重入
+  document.querySelectorAll('.asst-step').forEach((b) => {
+    const step = b.dataset.step;
+    const needComment = step === 'fill' && !(bound && (pub.manual || {}).comment);
+    b.title = needComment ? t('asstStepNeedComment') : '';
+    b.disabled = !activeTabUrl || needComment || asstStepBusy === step;
+  });
+
+  // 字段区：摘要（标题/摘要/文章语言）+ 评论字段（评论/译文/昵称/邮箱），各带复制按钮；
+  // 仅绑定会话时展示（切到别的标签页后旧数据不误导）
+  const m = bound ? (pub.manual || {}) : {};
+  const rows = [
+    ['fieldTitle', m.sumTitle], ['fieldSummary', m.summary], ['fieldLang', m.artLang],
+    ['fieldComment', m.comment], ['fieldTranslation', m.translation],
+    ['fieldName', m.name], ['fieldEmail', m.email],
+  ].filter(([, v]) => v);
+  const box = $('#asst-fields');
+  box.innerHTML = rows.map(([key, val], i) => `
+    <div class="asst-field">
+      <div class="asst-field-label"><span>${t(key)}</span><button class="asst-copy" data-idx="${i}">${t('copy')}</button></div>
+      <div class="asst-field-val">${esc(val)}</div>
+    </div>`).join('');
+  box.querySelectorAll('.asst-copy').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(rows[Number(btn.dataset.idx)][1]);
+        const old = btn.textContent;
+        btn.textContent = t('copied');
+        setTimeout(() => { btn.textContent = old; }, 1200);
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    });
+  });
+
+  // 定位目标链接 / 换一个：激活标签页是可注入网页即可用
+  $('#asst-locate').disabled = !activeTabUrl;
+  $('#asst-next').disabled = !activeTabUrl;
+  // Submit / Skip：仅绑定会话且 awaiting_review（表单已填好待确认）解锁
+  const review = stage === 'awaiting_review';
+  $('#asst-submit').disabled = !review;
+  $('#asst-skip').disabled = !review;
+  // 填表完成进入待确认时自动切到助手 Tab（后台无法主动弹面板，缓解「看不到确认界面」）
+  if (review && !asstLastReview) {
+    const cur = document.querySelector('.tab.active');
+    if (cur && cur.dataset.tab !== 'assistant') activateTab('assistant');
+  }
+  asstLastReview = review;
+}
+
+/** 步骤按钮：发 pub:step；看门狗超时未回包（SW 被回收/请求挂死）提示可再点一次重试 */
+async function runStep(step) {
+  if (asstStepBusy) return;
+  asstStepBusy = step;
+  const timeout = (Number(snap?.settings?.aiTimeoutMs) || 20000) * 3 + 30000;
+  clearTimeout(asstWatchdog);
+  asstWatchdog = setTimeout(() => {
+    asstStepBusy = null;
+    renderAssistant(); // 先恢复按钮状态，再覆盖状态行（避免被快照渲染抹掉提示）
+    $('#asst-status').textContent = t('asstStepNoResp');
+  }, timeout);
+  renderAssistant();
+  let failed = false;
+  try {
+    const res = await send({ type: 'pub:step', step });
+    if (res && res.ok === false) {
+      failed = true;
+      if (res.error) toast(res.error, 'error');
+    }
+  } catch {
+    failed = true;
+  }
+  clearTimeout(asstWatchdog);
+  asstStepBusy = null;
+  renderAssistant();
+  if (failed) $('#asst-status').textContent = t('asstStepNoResp');
+}
+
+/** 「定位目标链接」：结果（第 n/m 个 / 未找到）显示在状态行 */
+async function runLocate() {
+  const btn = $('#asst-locate');
+  btn.disabled = true;
+  const old = btn.textContent;
+  btn.textContent = t('asstLocating');
+  try {
+    const res = await send({ type: 'pub:locate' });
+    const status = $('#asst-status');
+    if (res && res.ok && res.index != null) status.textContent = t('asstLocated', { n: res.index, m: res.total });
+    else if (res && res.reason === 'noTarget') status.textContent = t('asstNoTarget');
+    else if (res && res.reason === 'noPage') status.textContent = t('asstNoPage');
+    else status.textContent = t('asstNoLink');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  btn.disabled = false;
+  btn.textContent = old;
+}
+
+async function decide(decision) {
+  try {
+    const res = await send({ type: 'pub:decision', decision });
+    if (res && res.ok === false) toast(t('asstStepNoResp'), 'error');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/** 「换一个」：当前激活标签页导航到资源库中未发布过的下一条资源 */
+async function pickNext() {
+  const btn = $('#asst-next');
+  btn.disabled = true;
+  try {
+    const res = await send({ type: 'pickNextResource' });
+    if (res && res.ok === false) toast(res.error || t('asstNoMore'), 'error');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  renderAssistant();
+}
+
+/* ---- 助手页「当前任务」与模板 ---- */
+
+function currentTaskFromFields() {
+  return {
+    name: $('#at-name').value.trim(),
+    targetUrl: $('#at-url').value.trim(),
+    siteIntro: $('#at-intro').value.trim(),
+    mainKeyword: $('#at-keyword').value.trim(),
+  };
+}
+
+function fillTplOptions(list, selected) {
+  asstTemplates = list || [];
+  const sel = $('#asst-tpl');
+  sel.innerHTML = `<option value="" data-i18n="tplSelect">${t('tplSelect')}</option>` +
+    asstTemplates.map((x) => `<option value="${esc(x.name)}" ${x.name === selected ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  $('#asst-tpl-del').disabled = !sel.value;
+}
+
+async function reloadTemplates(selected) {
+  try {
+    const res = await send({ type: 'getTemplates' });
+    if (res && res.templates) fillTplOptions(res.templates, selected);
+  } catch { /* 面板打开时后台未必就绪，忽略 */ }
 }
 
 // ================= 事件绑定 =================
@@ -419,9 +426,7 @@ function bindEvents() {
   $('#tabs').addEventListener('click', (e) => {
     const btn = e.target.closest('.tab');
     if (!btn) return;
-    document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b === btn));
-    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + btn.dataset.tab));
-    if (btn.dataset.tab === 'library') loadLibrary();
+    activateTab(btn.dataset.tab);
   });
 
   // 收集
@@ -450,23 +455,63 @@ function bindEvents() {
     }
   });
 
-  // 发布任务操作（事件委托）
-  $('#task-list').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-act]');
-    if (!btn) return;
-    const id = btn.dataset.id;
-    const task = (snap.tasks || []).find((x) => x.id === id);
-    switch (btn.dataset.act) {
-      case 'stop': await act({ type: 'taskAction', id, action: 'stop' }); break;
-      case 'delete':
-        if (confirm(t('taskDelete') + '?')) await act({ type: 'taskAction', id, action: 'delete' });
-        break;
-      case 'edit': if (task) showCreateTaskModal(task); break;
-      case 'detail': if (task) showDetailModal(task); break;
-    }
+  // 助手页：步骤按钮 / 定位目标链接 / 换一个 / Submit / Skip
+  document.querySelectorAll('.asst-step').forEach((b) => {
+    b.addEventListener('click', () => runStep(b.dataset.step));
+  });
+  $('#asst-locate').addEventListener('click', runLocate);
+  $('#asst-next').addEventListener('click', pickNext);
+  $('#asst-submit').addEventListener('click', () => decide('submit'));
+  $('#asst-skip').addEventListener('click', () => decide('skip'));
+
+  // 助手页「当前任务」：折叠/展开任务详情
+  $('#asst-task-toggle').addEventListener('click', () => {
+    asstTaskTouched = true;
+    asstTaskCollapsed = !asstTaskCollapsed;
+    renderAssistant();
   });
 
-  $('#btn-new-task').addEventListener('click', () => showCreateTaskModal());
+  // 助手页「当前任务」：字段失焦即保存（快照回来时已按聚焦态跳过回填，不打断输入）
+  ['#at-name', '#at-url', '#at-intro', '#at-keyword'].forEach((sel) => {
+    $(sel).addEventListener('change', () => {
+      send({ type: 'setAssistantTask', ...currentTaskFromFields() }).catch(() => {});
+      toast(t('saved'), 'success');
+    });
+  });
+
+  // 模板下拉：选中即填充字段并保存为当前任务
+  $('#asst-tpl').addEventListener('change', () => {
+    $('#asst-tpl-del').disabled = !$('#asst-tpl').value;
+    const tpl = asstTemplates.find((x) => x.name === $('#asst-tpl').value);
+    if (!tpl) return;
+    $('#at-name').value = tpl.name || '';
+    $('#at-url').value = tpl.targetUrl || '';
+    $('#at-intro').value = tpl.siteIntro || '';
+    $('#at-keyword').value = tpl.mainKeyword || '';
+    send({ type: 'setAssistantTask', ...currentTaskFromFields() }).catch(() => {});
+  });
+
+  // 存为模板（同名覆盖即编辑）
+  $('#asst-tpl-save').addEventListener('click', async () => {
+    const input = prompt(t('tplNamePrompt'), $('#at-name').value.trim() || $('#asst-tpl').value);
+    const tplName = (input || '').trim();
+    if (!tplName) return;
+    if (asstTemplates.some((x) => x.name === tplName) && !confirm(t('tplOverwrite', { name: tplName }))) return;
+    const res = await send({ type: 'saveTemplate', ...currentTaskFromFields(), name: tplName });
+    if (res && res.ok === false) return toast(res.error, 'error');
+    if (res && res.templates) fillTplOptions(res.templates, tplName);
+    toast(t('tplSaved'), 'success');
+  });
+
+  // 删除模板
+  $('#asst-tpl-del').addEventListener('click', async () => {
+    const tplName = $('#asst-tpl').value;
+    if (!tplName) return;
+    if (!confirm(`${t('delete')}「${tplName}」?`)) return;
+    const res = await send({ type: 'deleteTemplate', name: tplName });
+    if (res && res.templates) fillTplOptions(res.templates);
+    toast(t('tplDeleted'), 'success');
+  });
 
   // 翻页间隔保存（单位秒 → 毫秒）
   const savePageDelay = () => {
@@ -527,7 +572,17 @@ function bindEvents() {
     const res = (libraryRows || []).find((r) => r.url === url);
     if (!res) return;
     if (btn.dataset.ract === 'open') chrome.tabs.create({ url: res.url });
-    if (btn.dataset.ract === 'publish') showCreateTaskModal(null, res);
+    // 立即发布：把当前激活标签页导航到该资源 URL，随后到助手页执行各步骤
+    if (btn.dataset.ract === 'publish') {
+      try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab) return toast(t('asstNoPage'), 'error');
+        await chrome.tabs.update(tab.id, { url: res.url });
+        activateTab('assistant');
+      } catch (err) {
+        toast(err.message, 'error');
+      }
+    }
   });
 
   // 资源启用/停用（行内 checkbox）
@@ -596,11 +651,6 @@ function bindEvents() {
     render();
     send({ type: 'setSettings', patch: { language: e.target.value } });
   });
-
-  // 弹窗遮罩点击关闭
-  $('#modal-mask').addEventListener('click', (e) => {
-    if (e.target.id === 'modal-mask') closeModal();
-  });
 }
 
 // ================= 启动 =================
@@ -613,6 +663,13 @@ async function init() {
   } catch (e) {
     toast(e.message, 'error');
   }
+  reloadTemplates();
+  await refreshActiveTab();
+  // 激活标签页变化 / 页内跳转时刷新助手页的操作对象
+  chrome.tabs.onActivated.addListener(refreshActiveTab);
+  chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if (tab && tab.active && (info.url || info.status)) refreshActiveTab();
+  });
   // 后台快照推送（sendMessage 单向广播，无连接状态，SW 重启不影响送达）
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'stateChanged') applySnapshot(msg.snapshot);

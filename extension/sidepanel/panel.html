@@ -9,7 +9,7 @@
   <!-- 顶部 Tab -->
   <header class="tabs" id="tabs">
     <button class="tab active" data-tab="collect" data-i18n="tab_collect">收集</button>
-    <button class="tab" data-tab="publish" data-i18n="tab_publish">发布</button>
+    <button class="tab" data-tab="assistant" data-i18n="tab_assistant">助手</button>
     <button class="tab" data-tab="logs" data-i18n="tab_logs">日志</button>
     <button class="tab" data-tab="library" data-i18n="tab_library">资源库</button>
   </header>
@@ -60,27 +60,66 @@
       </div>
     </section>
 
-    <!-- ===== 发布 ===== -->
-    <section id="view-publish" class="view">
-      <div class="row-between">
-        <h2 class="section-title" data-i18n="publishTasks">发布任务</h2>
-        <button id="btn-new-task" class="btn btn-primary btn-sm" data-i18n="newTask">+ 新建任务</button>
+    <!-- ===== 助手（发布主操作台：顶部「当前任务」配置 + 对当前激活标签页执行各步骤）===== -->
+    <section id="view-assistant" class="view">
+      <div class="card" style="margin-top:0">
+        <div class="asst-task-head">
+          <label class="field-label" style="margin:0" data-i18n="asstTask">当前任务</label>
+          <!-- 折叠时在标题行显示当前任务名，便于确认操作对象 -->
+          <span class="asst-task-name" id="asst-task-name" hidden></span>
+          <button id="asst-task-toggle" class="btn btn-ghost btn-sm">收起</button>
+        </div>
+        <div class="form-row" style="margin-top:10px">
+          <div class="tpl-row">
+            <select id="asst-tpl"><option value="" data-i18n="tplSelect">选择模板填充…</option></select>
+            <button id="asst-tpl-save" class="btn btn-ghost btn-sm" data-i18n="tplSave">存为模板</button>
+            <button id="asst-tpl-del" class="btn btn-ghost btn-sm" data-i18n="delete" disabled>删除</button>
+          </div>
+        </div>
+        <!-- 任务详情：可被右上角按钮折叠/展开 -->
+        <div id="asst-task-body">
+          <div class="form-row">
+            <label class="field-label" data-i18n="taskName">任务名称</label>
+            <input type="text" id="at-name" placeholder="Canva" />
+          </div>
+          <div class="form-row">
+            <label class="field-label" data-i18n="targetUrl">目标地址（用于评论正文内嵌链接）</label>
+            <input type="text" id="at-url" placeholder="https://www.canva.com/" spellcheck="false" />
+          </div>
+          <div class="form-row">
+            <label class="field-label" data-i18n="siteIntro">网站介绍（一两句，供 AI 生成评论）</label>
+            <textarea id="at-intro" rows="2" data-i18n-ph="siteIntroPh"></textarea>
+          </div>
+          <div class="form-row">
+            <label class="field-label" data-i18n="mainKeyword">主关键词（AI 做同义词/前后缀变体作锚文本）</label>
+            <input type="text" id="at-keyword" data-i18n-ph="mainKeywordPh" />
+          </div>
+        </div>
       </div>
 
-      <div id="task-list"></div>
-      <div class="empty" id="tasks-empty" data-i18n="noTasks">暂无任务，点击右上角「+ 新建任务」创建</div>
+      <div class="form-row" style="margin-top:12px">
+        <label class="field-label" data-i18n="asstCurrentUrl">当前资源（当前激活标签页）</label>
+        <div class="asst-url" id="asst-url"></div>
+      </div>
+      <button id="asst-next" class="btn btn-outline btn-block" style="margin-top:0" data-i18n="asstNext">换一个（打开未发布资源）</button>
 
-      <div class="card status-card" id="publish-card" hidden>
+      <div class="card status-card">
         <div class="status-line">
-          <span class="dot" id="publish-dot"></span>
-          <span id="publish-phase">正在发布...</span>
+          <span class="dot" id="asst-dot"></span>
+          <span id="asst-status"></span>
         </div>
-        <div class="stats stats-5">
-          <div class="stat"><div class="num" id="pt-total">0</div><div class="lbl" data-i18n="stat_total">总计</div></div>
-          <div class="stat"><div class="num green" id="pt-success">0</div><div class="lbl" data-i18n="stat_success">成功</div></div>
-          <div class="stat"><div class="num orange" id="pt-pending">0</div><div class="lbl" data-i18n="stat_pending">待审核</div></div>
-          <div class="stat"><div class="num red" id="pt-failed">0</div><div class="lbl" data-i18n="stat_failed">失败</div></div>
-          <div class="stat"><div class="num" id="pt-remaining">0</div><div class="lbl" data-i18n="stat_remaining">剩余</div></div>
+        <div class="asst-steps">
+          <button class="btn btn-sm asst-step" data-step="summarize" data-i18n="stepSummarize">获取标题与摘要</button>
+          <button class="btn btn-sm asst-step" data-step="detectForm" data-i18n="stepDetect">AI 识别评论表单</button>
+          <button class="btn btn-sm asst-step" data-step="genComment" data-i18n="stepGen">AI 生成评论</button>
+          <button class="btn btn-sm asst-step" data-step="fill" data-i18n="stepFill">自动填写表单</button>
+        </div>
+        <!-- 摘要区 + 评论字段区：由 renderAssistant 按 snap.publish.manual 动态填充（各带复制按钮） -->
+        <div id="asst-fields"></div>
+        <button id="asst-locate" class="btn btn-outline btn-block" data-i18n="asstLocate">定位目标链接</button>
+        <div class="btn-row asst-decide">
+          <button id="asst-skip" class="btn btn-ghost" data-i18n="asstSkip">Skip</button>
+          <button id="asst-submit" class="btn btn-success" data-i18n="asstSubmit">Submit</button>
         </div>
       </div>
     </section>
@@ -141,11 +180,6 @@
       <option value="en">English</option>
     </select>
   </footer>
-
-  <!-- 弹窗 -->
-  <div id="modal-mask" hidden>
-    <div id="modal"></div>
-  </div>
 
   <div id="toast" hidden></div>
 

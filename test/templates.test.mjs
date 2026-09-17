@@ -44,7 +44,6 @@ const tpl = (over = {}) => ({
   targetUrl: 'https://www.canva.com/',
   siteIntro: '在线设计工具',
   mainKeyword: 'canva',
-  mode: 'semi',
   ...over,
 });
 
@@ -54,18 +53,17 @@ test('saveTemplate：保存后可从 getTemplates 读回', async () => {
   const list = await sendMsg({ type: 'getTemplates' });
   assert.equal(list.templates.length, 1);
   assert.deepEqual(
-    list.templates.map((x) => [x.name, x.targetUrl, x.siteIntro, x.mainKeyword, x.mode]),
-    [['Canva 模板', 'https://www.canva.com/', '在线设计工具', 'canva', 'semi']],
+    list.templates.map((x) => [x.name, x.targetUrl, x.siteIntro, x.mainKeyword]),
+    [['Canva 模板', 'https://www.canva.com/', '在线设计工具', 'canva']],
   );
   assert.ok(list.templates[0].updatedAt > 0);
 });
 
 test('saveTemplate：同名覆盖即编辑（不新增条数，字段更新）', async () => {
-  const res = await sendMsg(tpl({ mainKeyword: 'design', mode: 'auto' }));
+  const res = await sendMsg(tpl({ mainKeyword: 'design' }));
   assert.equal(res.ok, true);
   assert.equal(res.templates.length, 1);
   assert.equal(res.templates[0].mainKeyword, 'design');
-  assert.equal(res.templates[0].mode, 'auto');
 });
 
 test('saveTemplate：名称空白报错，不落库', async () => {

@@ -33,7 +33,7 @@ export async function chat(role, messages, { maxTokens = 1000, temperature = 0.4
     reasoning: { effort: LIMITS.aiReasoningEffort },
   };
   if (json) body.response_format = { type: 'json_object' };
-  // 超时主动中止：请求挂死时 SW 会一直等，浮层步骤按钮就被永久禁用
+  // 超时主动中止：请求挂死时 SW 会一直等，助手页步骤按钮就被永久卡住
   const timeoutMs = Number(settings.aiTimeoutMs) || 20000;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -132,25 +132,6 @@ export async function detectForm({ formHtml, pageUrl }) {
   return out;
 }
 
-/** 相关性预判：文章与目标网站主题是否搭得上边 */
-export async function checkRelevance({ title, text, siteIntro, mainKeyword }) {
-  const system = [
-    '你是相关性判断助手。判断一篇博客文章与某个网站主题是否相关——即能否在评论里自然地提到该网站。',
-    '完全无关（不同领域、硬凑不上）才算不相关；有任意角度可以自然关联就算相关。',
-    '只输出 JSON：{"related":true/false,"reason":"简短中文原因"}',
-  ].join('\n');
-  const user = [
-    `我的网站介绍：${siteIntro || '(无)'}`,
-    `主关键词：${mainKeyword || '(无)'}`,
-    '',
-    `文章标题: ${title || '(无)'}`,
-    '文章摘要:',
-    (text || '').slice(0, LIMITS.articleTextChunk),
-  ].join('\n');
-  const out = await chatJSON('classify', system, user, { maxTokens: 600, temperature: 0.1 });
-  return { related: !!out.related, reason: out.reason || '' };
-}
-
 /**
  * 标题与摘要：把可能截断的长正文提炼成摘要，同时给出指定语言的标题（原文不同语言则翻译），
  * 并识别文章正文语言（生成评论时评论语言跟随文章语言）。
@@ -211,7 +192,7 @@ export function buildCommentWithLink(text, targetUrl, fallbackAnchor) {
  * 评论生成：自然相关评论（语言跟随文章）+ 正文内嵌主关键词变体锚链接（website 字段留空，链接只走正文）。
  * 入参 title/text 是 AI 生成的标题与摘要，articleLang 是识别出的文章语言（提示词里显式指定评论语言）。
  * 链接是硬性要求（不带链接的评论对本工具无效）：模型未输出 {{LINK:}} 占位符时加强措辞重试一次，
- * 仍无占位符则抛错——全自动记失败并保留标签页，半自动浮层报错可重新生成。
+ * 仍无占位符则抛错——全自动记失败并保留标签页，半自动助手页报错可重新生成。
  */
 export async function generateComment({ url, title, text }, { targetUrl, siteIntro = '', mainKeyword = '', articleLang = '' } = {}) {
   const system = [
@@ -249,7 +230,7 @@ export async function generateComment({ url, title, text }, { targetUrl, siteInt
   const first = (await call()).trim();
   if (!targetUrl) return first.replace(/\s*\{\{LINK:[^}]+\}\}/g, '');
   if (/\{\{LINK:[^}]*\}\}/.test(first)) return buildCommentWithLink(first, targetUrl, mainKeyword || 'this website');
-  // 不带链接的评论对本工具是无效评论：加强措辞重试一次，仍无占位符则报错（上层记失败/浮层可重试）
+  // 不带链接的评论对本工具是无效评论：加强措辞重试一次，仍无占位符则报错（上层记失败/助手页可重试）
   const retry = (await call('注意：上一次输出没有包含 {{LINK:锚文本}} 占位符，这次必须包含且仅一次——从摘要里找与我网站主题最接近的点自然带出。')).trim();
   if (/\{\{LINK:[^}]*\}\}/.test(retry)) return buildCommentWithLink(retry, targetUrl, mainKeyword || 'this website');
   throw new Error('评论未带链接：AI 两次输出都未包含链接占位符');
@@ -257,7 +238,7 @@ export async function generateComment({ url, title, text }, { targetUrl, siteInt
 
 /**
  * 评论译文：把生成的评论翻译成用户阅读语言（lang ∈ zh/en，与摘要语言一致），
- * 仅供半自动浮层展示给用户看，不参与填表。评论里可能带 <a> 标签，译文输出纯文本。
+ * 仅供半自动助手页展示给用户看，不参与填表。评论里可能带 <a> 标签，译文输出纯文本。
  */
 export async function translateComment(comment, lang = 'zh') {
   const langName = lang === 'en' ? '英文' : '中文';

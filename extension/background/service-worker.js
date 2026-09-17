@@ -2,13 +2,12 @@
  * MV3 Service Worker：消息路由 + 状态快照广播 + 保活与断点续跑。
  */
 import {
-  load, getState, save, clearAll, addLog,
-  findTask, taskCounts, uid, domainOf,
+  load, getState, save, clearAll, addLog, domainOf,
 } from '../lib/storage.js';
 import { backlinksCsv } from '../lib/util.js';
 import { idbGet, idbGetDomain, idbGetAll, idbPut, idbPutAll, idbDelete } from '../lib/idb.js';
 import { CollectController } from './collect.js';
-import { PublishRunner } from './publish.js';
+import { PublishAssistant } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
 
 const ALARM_TICK = 'bcm-tick';
@@ -26,7 +25,7 @@ function ensureControllers() {
     broadcast();
   };
   if (!collect) collect = new CollectController(notify);
-  if (!publish) publish = new PublishRunner(notify);
+  if (!publish) publish = new PublishAssistant(notify);
 }
 
 async function snapshot() {
@@ -72,27 +71,37 @@ async function snapshot() {
       queued: st.collectState.queued,
       seeds: st.collectState.seeds.length,
     },
-    tasks: st.tasks.map((t) => ({
-      id: t.id, name: t.name, targetUrl: t.targetUrl,
-      siteIntro: t.siteIntro || '', mainKeyword: t.mainKeyword || '',
-      mode: t.mode,
-      status: t.status, resourceUrls: t.resourceUrls || [], results: t.results || {},
-      createdAt: t.createdAt, finishedAt: t.finishedAt,
-      counts: taskCounts(t),
-    })),
-    activeTaskId: st.activeTaskId,
+    // 助手页顶部「当前任务」配置（目标地址/网站介绍/主关键词）
+    assistantTask: { ...st.assistantTask },
+    // 助手页（对当前激活标签页的人工交互）所需的全部数据随快照下发：uiStatus.key 由面板经
+    // i18n 翻译，动态错误文本用 uiStatus.text；manual 里 name/email 从 identity 展开。
+    // 面板按 publish.resourceUrl 与当前激活标签页 URL 是否一致决定字段区与 Submit/Skip 是否生效
     publish: st.publishRuntime
-      ? { taskId: st.publishRuntime.taskId, resourceUrl: st.publishRuntime.resourceUrl, stage: st.publishRuntime.stage }
+      ? {
+          resourceUrl: st.publishRuntime.resourceUrl,
+          stage: st.publishRuntime.stage,
+          refDomain: st.publishRuntime.refDomain || '',
+          uiStatus: st.publishRuntime.uiStatus || null,
+          manual: (() => {
+            const m = st.publishRuntime.manual || {};
+            const id = m.identity || {};
+            return {
+              sumTitle: m.sumTitle || '', summary: m.summary || '', artLang: m.artLang || '',
+              comment: m.comment || '', translation: m.translation || '',
+              name: id.name || '', email: id.email || '',
+            };
+          })(),
+        }
       : null,
     resources,
     logs: st.logs.slice(-200).reverse(),
     settings: {
-      publishMode: st.settings.publishMode,
       language: st.settings.language,
       hasKey: !!st.settings.openrouterKey,
       pageDelayMinMs: st.settings.pageDelayMinMs,
       pageDelayMaxMs: st.settings.pageDelayMaxMs,
       logEnabled: st.settings.logEnabled !== false,
+      aiTimeoutMs: st.settings.aiTimeoutMs, // 助手页步骤按钮看门狗用（aiTimeoutMs * 3 + 30000）
     },
   };
 }
@@ -113,8 +122,7 @@ function ensureAlarm(on) {
 }
 
 function isIdle() {
-  const st = getState();
-  return st.collectState.status === 'idle' && !st.publishRuntime;
+  return getState().collectState.status === 'idle';
 }
 
 /**
@@ -208,54 +216,16 @@ async function handleMessage(msg, sender) {
       ensureAlarm(true);
       return { ok: true, snapshot: await snapshot() };
 
-    case 'createTask': {
-      const task = {
-        id: uid(),
-        name: msg.name || '未命名任务',
+    // ---- 助手页「当前任务」配置（生成的评论内嵌链接吃这里的 targetUrl/siteIntro/mainKeyword）----
+    case 'setAssistantTask': {
+      getState().assistantTask = {
+        name: (msg.name || '').trim(),
         targetUrl: (msg.targetUrl || '').trim(),
         siteIntro: (msg.siteIntro || '').trim(),
         mainKeyword: (msg.mainKeyword || '').trim(),
-        mode: msg.mode === 'auto' ? 'auto' : 'semi',
-        resourceUrls: Array.isArray(msg.resourceUrls) ? msg.resourceUrls : [],
-        status: 'idle',
-        results: {},
-        createdAt: Date.now(),
-        finishedAt: 0,
       };
-      getState().tasks.unshift(task);
-      addLog('publish', `创建任务「${task.name}」，绑定 ${task.resourceUrls.length} 条资源`, 'info');
-      await save('tasks', 'logs');
+      await save('assistantTask');
       broadcast();
-      await publish.startTask(task.id);
-      ensureAlarm(true);
-      return { ok: true, snapshot: await snapshot() };
-    }
-
-    case 'updateTask': {
-      const task = findTask(msg.id);
-      if (task) {
-        if (typeof msg.name === 'string') task.name = msg.name;
-        if (typeof msg.targetUrl === 'string') task.targetUrl = msg.targetUrl;
-        if (typeof msg.siteIntro === 'string') task.siteIntro = msg.siteIntro.trim();
-        if (typeof msg.mainKeyword === 'string') task.mainKeyword = msg.mainKeyword.trim();
-        if (msg.mode) task.mode = msg.mode === 'auto' ? 'auto' : 'semi';
-        await save('tasks');
-        broadcast();
-      }
-      return { ok: true, snapshot: await snapshot() };
-    }
-
-    case 'taskAction': {
-      const { id, action } = msg;
-      if (action === 'start') {
-        await publish.startTask(id);
-        ensureAlarm(true);
-      } else if (action === 'stop') {
-        await publish.stopTask(id);
-        if (isIdle()) ensureAlarm(false);
-      } else if (action === 'delete') {
-        await publish.deleteTask(id);
-      }
       return { ok: true, snapshot: await snapshot() };
     }
 
@@ -313,33 +283,7 @@ async function handleMessage(msg, sender) {
       return { ok: true, snapshot: await snapshot() };
     }
 
-    case 'publishOne': {
-      // 单条立即发布：包装成一个临时任务，资源锁定为这一条（来自 analysis 表命中记录）；
-      // 任务名称/目标地址/网站介绍/主关键词由弹窗传入，与新建任务一致
-      const st = getState();
-      if (!msg.url) return { ok: false, error: '资源不存在' };
-      const task = {
-        id: uid(),
-        name: (msg.name || '').trim() || '单条发布',
-        targetUrl: (msg.targetUrl || '').trim() || st.settings.identity.website || '',
-        siteIntro: (msg.siteIntro || '').trim(),
-        mainKeyword: (msg.mainKeyword || '').trim(),
-        mode: msg.mode === 'auto' ? 'auto' : msg.mode === 'semi' ? 'semi' : (st.settings.publishMode || 'semi'),
-        resourceUrls: [msg.url],
-        status: 'idle',
-        results: {},
-        createdAt: Date.now(),
-        finishedAt: 0,
-      };
-      st.tasks.unshift(task);
-      addLog('publish', `创建任务「${task.name}」，绑定 1 条资源`, 'info');
-      await save('tasks', 'logs');
-      await publish.startTask(task.id);
-      ensureAlarm(true);
-      return { ok: true, snapshot: await snapshot() };
-    }
-
-    // ---- 任务模板（存 IndexedDB templates 表，主键 name）----
+    // ---- 任务模板（存 IndexedDB templates 表，主键 name）：助手页「当前任务」从这里选择填充 ----
     case 'getTemplates': {
       const templates = await idbGetAll('templates').catch(() => []);
       templates.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
@@ -354,7 +298,6 @@ async function handleMessage(msg, sender) {
         targetUrl: (msg.targetUrl || '').trim(),
         siteIntro: (msg.siteIntro || '').trim(),
         mainKeyword: (msg.mainKeyword || '').trim(),
-        mode: msg.mode === 'auto' ? 'auto' : 'semi',
         updatedAt: Date.now(),
       };
       await idbPut('templates', tpl);
@@ -396,7 +339,6 @@ async function handleMessage(msg, sender) {
       const patch = msg.patch || {};
       if (patch.language) st.settings.language = patch.language === 'en' ? 'en' : 'zh';
       if (patch.summaryLang) st.settings.summaryLang = patch.summaryLang === 'en' ? 'en' : 'zh';
-      if (typeof patch.publishMode === 'string') st.settings.publishMode = patch.publishMode === 'auto' ? 'auto' : 'semi';
       if (typeof patch.logEnabled === 'boolean') st.settings.logEnabled = patch.logEnabled;
       if (typeof patch.openrouterKey === 'string') st.settings.openrouterKey = patch.openrouterKey.trim();
       if (patch.models && typeof patch.models === 'object') {
@@ -440,14 +382,23 @@ async function handleMessage(msg, sender) {
     }
 
     case 'pub:decision': {
-      await publish.onDecision(msg.resourceUrl, msg.decision);
-      return { ok: true };
+      // 助手页 Submit / Skip：操作对象 = 当前激活标签页（须与 publishRuntime 绑定页面一致）
+      return await publish.onDecision(msg.decision);
     }
 
     case 'pub:step': {
-      // 半自动浮层的步骤按钮：识别表单 / 生成评论 / 填写表单
-      await publish.onStep(msg.resourceUrl, msg.step);
-      return { ok: true };
+      // 助手页的步骤按钮：获取标题与摘要 / 识别表单 / 生成评论 / 填写表单（对当前激活标签页）
+      return await publish.onStep(msg.step);
+    }
+
+    case 'pub:locate': {
+      // 助手页「定位目标链接」：结果（第 n/m 个或失败原因）随响应返回给面板展示
+      return await publish.onLocate();
+    }
+
+    case 'pickNextResource': {
+      // 助手页「换一个」：当前激活标签页导航到资源库中未发布过的下一条资源
+      return await publish.pickNext();
     }
 
     default:
@@ -462,7 +413,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // 异步响应
 });
 
-// ---- 保活 / 断点续跑 ----
+// ---- 保活 / 断点续跑（收集队列；发布由助手页对当前标签页驱动，无后台循环）----
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== ALARM_TICK) return;
   (async () => {
@@ -474,7 +425,6 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     if (st.collectState.status === 'stopping' && !collect.busy && !collect.scraping) {
       collect.finish('stopCollect');
     }
-    if (st.publishRuntime) await publish.healthCheck();
     if (isIdle()) ensureAlarm(false);
   })().catch((e) => console.error('[BCM] alarm error', e));
 });
@@ -487,7 +437,6 @@ chrome.runtime.onInstalled.addListener(() => {
     const st = getState();
     // 断点续跑：安装/更新时如果状态是 running，恢复队列处理
     if (st.collectState.status === 'running') collect.resume();
-    if (st.publishRuntime) await publish.healthCheck();
   })().catch(console.error);
 });
 
@@ -498,7 +447,6 @@ chrome.runtime.onStartup.addListener(() => {
     await refreshCollectStatsFromIdb();
     const st = getState();
     if (st.collectState.status === 'running') collect.resume();
-    if (st.publishRuntime) await publish.healthCheck();
   })().catch(console.error);
 });
 

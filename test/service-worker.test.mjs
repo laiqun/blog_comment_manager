@@ -168,3 +168,46 @@ test('alarm：SW 回收后卡住的 stopping 状态被收尾为 idle', async () 
   assert.equal(getState().collectState.status, 'idle');
   assert.equal(getState().collectState.phase, 'stopCollect');
 });
+
+test('getSnapshot：publish 携带助手页所需的扩展字段（refDomain/uiStatus/manual），settings 含 aiTimeoutMs', async () => {
+  const st = getState();
+  st.publishRuntime = {
+    resourceUrl: 'https://a.com/1', stage: 'awaiting_review', tabId: 7,
+    refDomain: 'example.com', uiStatus: { key: 'asstReady' },
+    manual: {
+      sumTitle: '标题', summary: '摘要', artLang: '中文',
+      comment: '评论内容', translation: '译文',
+      identity: { name: 'Nick', email: 'nick@x.com', website: '' },
+    },
+  };
+  const res = await sendMsg({ type: 'getSnapshot' });
+  const p = res.snapshot.publish;
+  assert.equal(p.resourceUrl, 'https://a.com/1');
+  assert.equal(p.stage, 'awaiting_review');
+  assert.equal(p.refDomain, 'example.com');
+  assert.deepEqual(p.uiStatus, { key: 'asstReady' });
+  assert.deepEqual(p.manual, {
+    sumTitle: '标题', summary: '摘要', artLang: '中文',
+    comment: '评论内容', translation: '译文',
+    name: 'Nick', email: 'nick@x.com',
+  });
+  assert.equal(typeof res.snapshot.settings.aiTimeoutMs, 'number'); // 助手页步骤按钮看门狗用
+  // publishRuntime 为 null 时 publish 为 null（现有行为）
+  st.publishRuntime = null;
+  const res2 = await sendMsg({ type: 'getSnapshot' });
+  assert.equal(res2.snapshot.publish, null);
+});
+
+test('setAssistantTask：保存助手页「当前任务」配置并随快照下发', async () => {
+  const res = await sendMsg({
+    type: 'setAssistantTask',
+    name: 'Canva', targetUrl: ' https://www.canva.com/ ', siteIntro: '在线设计工具', mainKeyword: 'canva',
+  });
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.snapshot.assistantTask, {
+    name: 'Canva', targetUrl: 'https://www.canva.com/', siteIntro: '在线设计工具', mainKeyword: 'canva',
+  });
+  // 持久化：重新 getSnapshot 仍在
+  const res2 = await sendMsg({ type: 'getSnapshot' });
+  assert.equal(res2.snapshot.assistantTask.targetUrl, 'https://www.canva.com/');
+});

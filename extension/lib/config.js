@@ -16,11 +16,10 @@ export const DEFAULT_SETTINGS = {
   identity: {
     name: '',    // 评论昵称
     email: '',   // 评论邮箱
-    website: '', // 默认落地网址（任务的 targetUrl 优先）
+    website: '', // 默认落地网址（助手页「当前任务」的目标地址优先）
   },
-  publishMode: 'semi',     // semi=半自动(人工确认) / auto=全自动
   language: 'zh',          // zh / en
-  summaryLang: 'zh',       // 标题与摘要语言：zh=中文 / en=英文（浮层展示与下游 AI 步骤共用）
+  summaryLang: 'zh',       // 标题与摘要语言：zh=中文 / en=英文（助手页展示与下游 AI 步骤共用）
   analyzeDelayMs: 800,     // 分析队列每条之间的间隔
   aiDelayMs: 400,          // AI 请求最小间隔
   aiTimeoutMs: 20000,      // AI 单次请求超时（毫秒）：超时主动中止，避免请求挂死把流程卡死

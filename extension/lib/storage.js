@@ -26,12 +26,14 @@ const EMPTY_COLLECT = () => ({
   startedAt: 0,
 });
 
+// 助手页「当前任务」：发布时的目标配置（可从 IndexedDB templates 表选模板填充）
+const EMPTY_ASSISTANT_TASK = () => ({ name: '', targetUrl: '', siteIntro: '', mainKeyword: '' });
+
 const state = {
   settings: JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),
   collectState: EMPTY_COLLECT(),
-  tasks: [],             // {id, name, targetUrl, mode, resourceUrls, status, results:{url:'success'|'skip'|'fail'|'captcha'}, createdAt, finishedAt}
-  activeTaskId: null,
-  publishRuntime: null,  // {taskId, resourceUrl, stage, tabId}
+  assistantTask: EMPTY_ASSISTANT_TASK(),
+  publishRuntime: null,  // 助手会话状态 {resourceUrl, tabId, stage, refDomain, uiStatus, manual}
   logs: [],              // {t, src, msg, level, url}
   loaded: false,
 };
@@ -48,15 +50,27 @@ export async function load() {
     Object.assign(state, {
       settings: { ...JSON.parse(JSON.stringify(DEFAULT_SETTINGS)), ...saved.settings, models: { ...DEFAULT_SETTINGS.models, ...(saved.settings?.models || {}) }, identity: { ...DEFAULT_SETTINGS.identity, ...(saved.settings?.identity || {}) } },
       collectState: { ...EMPTY_COLLECT(), ...(saved.collectState || {}) },
-      tasks: saved.tasks || [],
-      activeTaskId: saved.activeTaskId ?? null,
+      assistantTask: { ...EMPTY_ASSISTANT_TASK(), ...(saved.assistantTask || {}) },
       publishRuntime: saved.publishRuntime || null,
       logs: saved.logs || [],
     });
   }
   state.loaded = true;
   await migrateBacklinksToIdb(saved);
+  await dropLegacyTasks(saved);
   return state;
+}
+
+/** 旧版的任务队列（tasks / activeTaskId）已随「发布」Tab 移除：一次性从 storage 清掉 */
+async function dropLegacyTasks(saved) {
+  if (!saved || (!('tasks' in saved) && !('activeTaskId' in saved))) return;
+  try {
+    const data = await chrome.storage.local.get(STORAGE_KEY);
+    const cur = data[STORAGE_KEY] || {};
+    delete cur.tasks;
+    delete cur.activeTaskId;
+    await chrome.storage.local.set({ [STORAGE_KEY]: cur });
+  } catch { /* 清理失败不影响使用 */ }
 }
 
 /** 旧版 backlinks 双写在 chrome.storage：一次性迁移到 IndexedDB（唯一持久层）后从 storage 移除 */
@@ -79,7 +93,7 @@ async function migrateBacklinksToIdb(saved) {
 }
 
 export async function save(...keys) {
-  const all = ['settings', 'collectState', 'tasks', 'activeTaskId', 'publishRuntime', 'logs'];
+  const all = ['settings', 'collectState', 'assistantTask', 'publishRuntime', 'logs'];
   const list = keys && keys.length ? keys : all;
   const payload = {};
   for (const k of list) {
@@ -94,8 +108,7 @@ export async function clearAll() {
   await chrome.storage.local.remove(STORAGE_KEY);
   state.settings = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
   state.collectState = EMPTY_COLLECT();
-  state.tasks = [];
-  state.activeTaskId = null;
+  state.assistantTask = EMPTY_ASSISTANT_TASK();
   state.publishRuntime = null;
   state.logs = [];
   for (const s of ['backlinks', 'analysis', 'published', 'templates']) idbClear(s).catch(() => {});
@@ -117,22 +130,7 @@ export function domainOf(url) {
   try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return ''; }
 }
 
-// ---------- 任务 ----------
-
-export function findTask(id) {
-  return state.tasks.find((t) => t.id === id);
-}
-
-export function taskCounts(task) {
-  const results = Object.values(task.results || {});
-  const processed = results.length;
-  const success = results.filter((v) => v === 'success').length;
-  const failed = results.filter((v) => v === 'fail').length;
-  const skipped = results.filter((v) => v === 'skip' || v === 'captcha').length;
-  const total = (task.resourceUrls || []).length;
-  const pending = Math.max(state.publishRuntime?.taskId === task.id && state.publishRuntime.stage === 'awaiting_review' ? 1 : 0, 0);
-  return { total, success, failed, skipped, pending, remaining: Math.max(total - processed, 0) };
-}
+// ---------- 工具 ----------
 
 export function uid() {
   if (globalThis.crypto?.randomUUID) return crypto.randomUUID();

@@ -17,28 +17,11 @@ globalThis.chrome = {
   },
 };
 
-const { load, getState, save, addLog, taskCounts, uid, domainOf } =
+const { load, getState, save, addLog, uid, domainOf } =
   await import('../extension/lib/storage.js');
 const { LIMITS } = await import('../extension/lib/config.js');
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-
-test('taskCounts 统计成功/失败/跳过/待审核/剩余', async () => {
-  await load();
-  const st = getState();
-  const urls = ['https://a.com/1', 'https://a.com/2', 'https://a.com/3', 'https://a.com/4'];
-  const task = { id: 't', name: 'n', targetUrl: '', mode: 'semi', resourceUrls: urls, status: 'running', results: {}, createdAt: 0, finishedAt: 0 };
-  st.tasks.push(task);
-  task.results[urls[0]] = 'success';
-  task.results[urls[1]] = 'fail';
-  task.results[urls[2]] = 'skip';
-  st.publishRuntime = { taskId: 't', resourceUrl: urls[3], stage: 'awaiting_review', tabId: null };
-  const c = taskCounts(task);
-  assert.deepEqual(c, { total: 4, success: 1, failed: 1, skipped: 1, pending: 1, remaining: 1 });
-  st.publishRuntime = null; // 待审核结束
-  assert.equal(taskCounts(task).pending, 0);
-  st.tasks.pop();
-});
 
 test('addLog 有上限且新日志在末尾', () => {
   for (let i = 0; i < LIMITS.logCap + 10; i++) addLog('collect', `log-${i}`);
@@ -72,10 +55,22 @@ test('save 不把大数据表写进 chrome.storage', async () => {
 test('save 部分 key 合并写入，不抹掉其它字段', async () => {
   getState().logs = [{ t: 1, src: 'collect', msg: 'keep-me' }];
   await save('logs');
-  await save('tasks'); // 第二次只存 tasks，logs 必须还在
+  await save('assistantTask'); // 第二次只存 assistantTask，logs 必须还在
   const stored = mem.get('bcm_store');
   assert.ok(stored.logs && stored.logs.length === 1);
-  assert.ok(Array.isArray(stored.tasks));
+  assert.ok(stored.assistantTask && typeof stored.assistantTask === 'object');
+});
+
+test('旧版任务队列数据（tasks/activeTaskId）加载时被一次性清除', async () => {
+  // 模拟旧版残留：直接往桩里塞 tasks/activeTaskId，重新加载后应被抹掉
+  const cur = mem.get('bcm_store') || {};
+  mem.set('bcm_store', { ...cur, tasks: [{ id: 't1' }], activeTaskId: 't1' });
+  getState().loaded = false; // 强制重新走 load()
+  await load();
+  const stored = mem.get('bcm_store');
+  assert.equal(stored.tasks, undefined);
+  assert.equal(stored.activeTaskId, undefined);
+  assert.equal('tasks' in getState(), false); // 内存态也不再有任务队列
 });
 
 test('domainOf 去掉 www', () => {

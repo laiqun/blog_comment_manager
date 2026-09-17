@@ -123,24 +123,7 @@ input::placeholder { color: var(--text-faint); }
 .num.orange { color: var(--orange); }
 .seed-line { margin-top: 10px; color: var(--text-faint); font-size: 11.5px; border-top: 1px solid rgba(255,255,255,.06); padding-top: 8px; }
 
-/* ---- 任务卡片 ---- */
-.task-card {
-  background: var(--card);
-  border: 1px solid transparent;
-  border-radius: 10px;
-  padding: 12px 14px;
-  margin-bottom: 10px;
-}
-.task-card.running { border-color: var(--green); }
-.task-card .task-top { display: flex; align-items: center; gap: 8px; }
-.task-card .task-name { font-weight: 700; font-size: 13.5px; }
-.task-card .task-url { color: var(--text-dim); font-size: 12px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.task-card .task-mode { font-size: 10.5px; color: var(--blue-bright); background: rgba(59,130,246,.15); border-radius: 4px; padding: 2px 6px; flex-shrink: 0; }
-.task-card .task-mid { display: flex; gap: 12px; margin: 8px 0; color: var(--text-dim); font-size: 12px; }
-.task-card .task-mid b { color: var(--text); font-weight: 700; }
-.task-card .task-mid .ok b { color: var(--green); }
-.task-card .task-mid .fail b { color: var(--red); }
-.task-actions { display: flex; gap: 6px; justify-content: flex-end; }
+/* ---- 行内小图标按钮（资源库行内操作等） ---- */
 .icon-btn {
   background: var(--input);
   border: none;
@@ -153,8 +136,30 @@ input::placeholder { color: var(--text-faint); }
 }
 .icon-btn:hover { color: var(--text); background: #2c3145; }
 .icon-btn.danger:hover { color: #fff; background: var(--red); }
-.icon-btn.stop:hover { color: #fff; background: var(--red); }
 .icon-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+/* 卡片内的表单行间距（助手页「当前任务」区） */
+.card .form-row { margin-bottom: 10px; }
+.card .form-row:last-child { margin-bottom: 0; }
+#asst-task-body .form-row:last-child { margin-bottom: 0; }
+
+/* 模板选择行（助手页「当前任务」） */
+.tpl-row { display: flex; gap: 6px; }
+.tpl-row select { flex: 1; min-width: 0; }
+.tpl-row .btn { flex-shrink: 0; }
+
+/* 「当前任务」标题行（标签 + 折叠时任务名摘要 + 折叠按钮） */
+.asst-task-head { display: flex; align-items: center; gap: 8px; }
+.asst-task-head .btn { flex-shrink: 0; padding: 3px 10px; font-size: 12px; }
+.asst-task-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
 
 /* ---- 日志 ---- */
 .log-list { display: flex; flex-direction: column; gap: 6px; }
@@ -269,47 +274,6 @@ input::placeholder { color: var(--text-faint); }
 .footer .spacer { flex: 1; }
 .footer select { width: auto; padding: 4px 8px; font-size: 12px; border-radius: 6px; }
 
-/* ---- 弹窗 ---- */
-#modal-mask {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.55);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-  padding: 16px;
-}
-/* hidden 属性的 UA 样式(display:none)会被上面的 display:flex 覆盖，必须显式关掉 */
-#modal-mask[hidden] { display: none; }
-#modal {
-  background: var(--card);
-  border-radius: 12px;
-  padding: 16px;
-  width: 100%;
-  max-height: 420px;
-  overflow-y: auto;
-}
-#modal h3 { font-size: 14.5px; margin-bottom: 12px; }
-#modal .form-row { margin-bottom: 10px; }
-#modal .mode-row { display: flex; flex-direction: column; gap: 6px; }
-#modal .mode-row label { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 12.5px; cursor: pointer; }
-#modal .btn-row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
-#modal .tpl-row { display: flex; gap: 6px; }
-#modal .tpl-row select { flex: 1; min-width: 0; }
-#modal .tpl-row .btn { flex-shrink: 0; }
-
-.detail-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(255,255,255,.05);
-  font-size: 12px;
-}
-.detail-item:last-child { border-bottom: none; }
-.detail-item .u { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-dim); }
-
 .empty { color: var(--text-faint); text-align: center; padding: 24px 0; font-size: 12.5px; }
 
 /* ---- Toast ---- */
@@ -351,6 +315,53 @@ input::placeholder { color: var(--text-faint); }
   color: var(--text-faint);
   font-size: 11px;
 }
+
+/* ---- 助手页 ---- */
+.asst-url {
+  background: var(--input);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--text);
+}
+.asst-steps { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.asst-step { width: 100%; text-align: left; background: var(--input); color: var(--text); }
+.asst-step:hover:not(:disabled) { background: #2c3145; }
+#asst-fields { margin-bottom: 10px; }
+.asst-field { margin-bottom: 8px; }
+.asst-field:last-child { margin-bottom: 0; }
+.asst-field-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+.asst-copy {
+  padding: 1px 8px;
+  border: 1px solid var(--blue-bright);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--blue-bright);
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.asst-copy:hover { background: rgba(74,158,255,.12); }
+.asst-field-val {
+  background: var(--input);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 140px;
+  overflow-y: auto;
+}
+.asst-decide { display: flex; gap: 8px; margin-top: 4px; }
+.asst-decide .btn { flex: 1; }
 
 /* 日志开关（日志 Tab 标题右侧） */
 .log-title-row {
