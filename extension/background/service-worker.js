@@ -13,7 +13,6 @@ import { PublishRunner } from './publish.js';
 import { testKey } from '../lib/openrouter.js';
 
 const ALARM_TICK = 'bcm-tick';
-const ports = new Set();
 
 // 点击工具栏图标直接打开侧边栏（无 popup）
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((e) => {
@@ -73,9 +72,9 @@ async function snapshot() {
 
 async function broadcast() {
   const msg = { type: 'stateChanged', snapshot: await snapshot() };
-  for (const p of ports) {
-    try { p.postMessage(msg); } catch { /* closed */ }
-  }
+  // 无连接单向广播给扩展页面（sidepanel）：不依赖长连接，SW 重启换新实例后照样送达；
+  // 面板未打开时无人接收，静默忽略
+  chrome.runtime.sendMessage(msg).catch(() => {});
 }
 
 function ensureAlarm(on) {
@@ -364,13 +363,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return true; // 异步响应
 });
 
-// ---- Popup 长连接：实时推送快照 ----
-chrome.runtime.onConnect.addListener((port) => {
-  if (port.name !== 'popup') return;
-  ports.add(port);
-  port.onDisconnect.addListener(() => ports.delete(port));
-});
-
 // ---- 保活 / 断点续跑 ----
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name !== ALARM_TICK) return;
@@ -379,6 +371,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     ensureControllers();
     const st = getState();
     if (st.collectState.status === 'running') collect.resume();
+    // SW 在停止途中被回收时状态会卡在 stopping：此处无循环在跑（新实例），直接落地为 idle
+    if (st.collectState.status === 'stopping' && !collect.busy && !collect.scraping) {
+      collect.finish('stopCollect');
+    }
     if (st.publishRuntime) await publish.healthCheck();
     if (isIdle()) ensureAlarm(false);
   })().catch((e) => console.error('[BCM] alarm error', e));

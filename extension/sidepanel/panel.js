@@ -1,12 +1,11 @@
 /**
  * Popup：四 Tab（收集/发布/日志/资源库）+ 页脚 + 任务弹窗。
- * 与 background 通过 sendMessage(RPC) + port 长连接（实时快照推送）交互。
+ * 与 background 通过 sendMessage(RPC) + stateChanged 广播推送交互。
  */
 import { setLanguage, t, applyI18n } from '../lib/i18n.js';
 import { toCSV, fmtTime } from '../lib/util.js';
 
 let snap = null;
-let port = null;
 
 // 资源库筛选状态
 const filters = { type: 'all', status: null };
@@ -502,12 +501,10 @@ async function init() {
   } catch (e) {
     toast(e.message, 'error');
   }
-  // 长连接实时刷新
-  port = chrome.runtime.connect({ name: 'popup' });
-  port.onMessage.addListener((msg) => {
+  // 后台快照推送（sendMessage 单向广播，无连接状态，SW 重启不影响送达）
+  chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === 'stateChanged') applySnapshot(msg.snapshot);
   });
-  port.onDisconnect.addListener(() => { port = null; });
 }
 
 init();

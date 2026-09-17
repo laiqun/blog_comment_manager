@@ -24,9 +24,10 @@ globalThis.chrome = {
   },
   runtime: {
     onMessage: capture('onMessage'),
-    onConnect: capture('onConnect'),
     onInstalled: capture('onInstalled'),
     onStartup: capture('onStartup'),
+    // 广播推送（stateChanged）：测试环境无接收方，模拟拒绝以覆盖 broadcast 的 catch
+    sendMessage: () => Promise.reject(new Error('no receiver')),
   },
   sidePanel: { setPanelBehavior: async () => {} },
   alarms: { create: () => {}, clear: () => {}, onAlarm: capture('onAlarm') },
@@ -135,4 +136,17 @@ test('deleteLibraryRow：删掉 analysis 记录与同 url 资源，资源库不�
   const lib = await sendMsg({ type: 'getLibraryResources' });
   assert.equal(lib.resources.length, 0);
   assert.equal(res.snapshot.resources.some((r) => r.url === 'https://a.com/1'), false); // 资源表同 url 记录一并清除
+});
+
+test('alarm：SW 回收后卡住的 stopping 状态被收尾为 idle', async () => {
+  const cs = getState().collectState;
+  cs.status = 'stopping';
+  cs.phase = 'phaseStopping';
+  listeners.onAlarm({ name: 'bcm-tick' });
+  // alarm 处理器是异步 IIFE，轮询等待收尾完成
+  for (let i = 0; i < 100 && getState().collectState.status !== 'idle'; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  assert.equal(getState().collectState.status, 'idle');
+  assert.equal(getState().collectState.phase, 'stopCollect');
 });

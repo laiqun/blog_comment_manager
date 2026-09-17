@@ -51,8 +51,8 @@ test/                        # Node 自带 node:test 单测（见下）
 - **持久化分两层**：
   - `chrome.storage.local`（key `bcm_store`）存小状态：settings / collectState / tasks / activeTaskId / publishRuntime / logs。`lib/storage.js` 的 `state` 是它的内存镜像，**变更后必须 `save(...keys)`**；`save` 是合并写入（先 get 再展开），不要绕过它直接写 storage。
   - **IndexedDB（`bcm-idb`）是大数据表的唯一持久层**，不进 chrome.storage、不进内存态：`backlinks`（主键 `[targetDomain, url]`）、`analysis`（同主键）、`resources`（主键 `[url]`，单字段也要传数组）。资源库 UI 直读 `analysis` 表（`reason === '命中，可发布'`）。旧版双写数据由 `storage.js` 里的一次性迁移函数搬到 IDB。
-- **MV3 service worker 随时被回收**：所有状态落盘后才能丢；`chrome.alarms`（`bcm-tick`，30 秒）负责唤醒续跑收集/发布队列；`onInstalled`/`onStartup` 做断点续跑。
-- **UI ↔ 后台通信**：sidepanel 用 `sendMessage` RPC（`getSnapshot`、`startCollect`、`createTask`、`setSettings` 等）+ 名为 `popup` 的 port 长连接接收 `stateChanged` 快照推送。**设置的唯一写入口是 `setSettings` 消息**，options 页也不得直接写 storage（会被后台内存态覆盖）。
+- **MV3 service worker 随时被回收**：所有状态落盘后才能丢；`chrome.alarms`（`bcm-tick`，30 秒）负责唤醒续跑收集/发布队列，并把回收途中卡住的 `stopping` 状态收尾为 `idle`；`onInstalled`/`onStartup` 做断点续跑。
+- **UI ↔ 后台通信**：sidepanel 用 `sendMessage` RPC（`getSnapshot`、`startCollect`、`createTask`、`setSettings` 等）；后台状态推送走 `chrome.runtime.sendMessage` 单向广播（`stateChanged` 快照），**不用 port 长连接**——无连接状态，SW 回收重启后新实例照样送达，面板关着时静默丢弃、打开时由 `init()` 的 `getSnapshot` 追平。**设置的唯一写入口是 `setSettings` 消息**，options 页也不得直接写 storage（会被后台内存态覆盖）。
 - **收集统计口径**：空闲时（`getSnapshot` 触发，3 秒去抖）从 IndexedDB 重新计算已发现/已分析/队列中/命中（见 `service-worker.js` 的 `refreshCollectStatsFromIdb`）。
 - **AI 调用**：全走 OpenRouter `/chat/completions`，`chatJSON` 要求 `json_object` 输出并有脏输出兜底提取；四个角色模型可在设置页分别配置，默认 `google/gemini-2.0-flash-001`；调用间有 `aiDelayMs` 节流。评论内嵌链接用 `{{LINK:锚文本}}` 占位符，由 `buildCommentWithLink` 替换为 `<a>`。
 - **数据源联调**：Semrush 走「面板模式」（已联调通过）：用户需先在 dash.3ue.co 打开工具并停留在 `sem.3ue.co` 标签，插件校验当前标签后取 URL 里的 `__gmitm` 令牌直达报告页。Ahrefs 是「直连模式」占位（`backlinksUrlTemplate` 等留空待联调）。新增数据源时只改 `lib/config.js` 的 `PROVIDERS`。
