@@ -6,8 +6,10 @@
  * 让人工确认 AI 找到的是哪个表单（与红色「定位目标链接」标记互不干扰）；
  * 评论生成后由 showComment 把评论/昵称/邮箱展示在浮层上，每个字段带复制按钮，
  * 识别或填表失败时可手动粘贴。
- * 半自动模式下页面一打开就显示浮层（showOverlay），AI 步骤（识别表单/生成评论/填写表单）
- * 不自动执行，由浮层上的步骤按钮逐个手动触发（setStep 控制可点项），填表完成后才解锁
+ * 半自动模式下页面一打开就显示浮层（showOverlay），AI 步骤（生成评论/识别表单/填写表单）
+ * 不自动执行，由浮层上的步骤按钮手动触发（setStep 控制可点项；「AI 生成评论」与
+ * 「AI 识别评论表单」互不依赖可同时点击，且生成评论可反复执行换一条；
+ * 「自动填写表单」需评论生成后才解锁），填表完成后才解锁
  * Submit / Skip；浮层上的「定位目标链接」按钮可循环跳转到页面中包含收集目标域名
  * （同行站点）的锚点，供人工参考已有外链。
  */
@@ -20,16 +22,16 @@
   const I18N = {
     zh: {
       title: '评论发布助手',
-      manual: '页面已打开。请按顺序点击步骤按钮，确认无误后再提交。',
+      manual: '页面已打开。「AI 生成评论」与「AI 识别评论表单」互不依赖，可任意顺序执行；评论不满意可再点一次重新生成，满意后点「自动填写表单」。',
       detecting: '正在识别评论表单…',
       generating: 'AI 正在生成评论…',
       filling: '正在自动填写表单…',
-      formDone: '表单识别完成，请点击「生成评论」。',
-      commentDone: '评论已生成，请点击「填写表单」。',
+      formDone: '表单识别完成，已高亮目标表单。',
+      commentDone: '评论已生成。不满意可再点「AI 生成评论」换一条，满意后点「自动填写表单」。',
       ready: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。',
-      stepDetect: '① AI 识别评论表单',
-      stepGen: '② AI 生成评论',
-      stepFill: '③ 自动填写表单',
+      stepDetect: 'AI 识别评论表单',
+      stepGen: 'AI 生成评论',
+      stepFill: '自动填写表单',
       skip: 'Skip',
       submit: 'Submit',
       locate: '定位目标链接',
@@ -45,16 +47,16 @@
     },
     en: {
       title: 'Comment Assistant',
-      manual: 'Page opened. Click the step buttons in order, then submit after review.',
+      manual: 'Page opened. "AI generate comment" and "AI detect form" are independent — run them in any order. Not happy with the comment? Click again for a new one, then "Auto fill form".',
       detecting: 'Detecting the comment form…',
       generating: 'AI is generating the comment…',
       filling: 'Filling the comment form…',
-      formDone: 'Form detected. Click "Generate comment" to continue.',
-      commentDone: 'Comment generated. Click "Fill form" to continue.',
+      formDone: 'Form detected and highlighted on the page.',
+      commentDone: 'Comment generated. Click "AI generate comment" again for a new one, or "Auto fill form" to continue.',
       ready: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.',
-      stepDetect: '① AI detect form',
-      stepGen: '② AI generate comment',
-      stepFill: '③ Auto fill form',
+      stepDetect: 'AI detect form',
+      stepGen: 'AI generate comment',
+      stepFill: 'Auto fill form',
       skip: 'Skip',
       submit: 'Submit',
       locate: 'Locate target link',
@@ -450,8 +452,8 @@
       return b;
     };
     const steps = {
-      detectForm: mkStep('detectForm', s.stepDetect),
       genComment: mkStep('genComment', s.stepGen),
+      detectForm: mkStep('detectForm', s.stepDetect),
       fill: mkStep('fill', s.stepFill),
     };
     for (const b of Object.values(steps)) stepCol.appendChild(b);
@@ -509,11 +511,22 @@
     setStep('detectForm');
   }
 
-  /** 切换当前可点的步骤按钮，并更新状态文案；key ∈ detectForm/genComment/fill/done */
+  /**
+   * 切换可点的步骤按钮，并更新状态文案；key ∈ detectForm/genComment/fill/done。
+   * 「AI 生成评论」与「AI 识别评论表单」互不依赖，可同时点击；
+   * 「AI 生成评论」可反复执行（点一次生成一条新的，不满意就再点），进入填写阶段后仍保持可点；
+   * 「自动填写表单」需评论已生成，由后台推进到 fill 时才解锁。
+   */
   function setStep(key) {
     if (!overlayEls || !overlayEls.steps) return;
+    const enabled = {
+      detectForm: ['detectForm', 'genComment'],
+      genComment: ['detectForm', 'genComment'],
+      fill: ['genComment', 'fill'],
+      done: [],
+    }[key] || [];
     for (const [k, b] of Object.entries(overlayEls.steps)) {
-      const on = k === key;
+      const on = enabled.includes(k);
       b.disabled = !on;
       b.style.opacity = on ? '1' : '.45';
       b.style.cursor = on ? 'pointer' : 'not-allowed';
