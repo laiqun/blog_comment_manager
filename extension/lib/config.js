@@ -23,6 +23,7 @@ export const DEFAULT_SETTINGS = {
   summaryLang: 'zh',       // 标题与摘要语言：zh=中文 / en=英文（浮层展示与下游 AI 步骤共用）
   analyzeDelayMs: 800,     // 分析队列每条之间的间隔
   aiDelayMs: 400,          // AI 请求最小间隔
+  aiTimeoutMs: 20000,      // AI 单次请求超时（毫秒）：超时主动中止，避免请求挂死把流程卡死
   pageDelayMinMs: 3000,    // 收集翻页最小间隔（可在收集 Tab 配置）
   pageDelayMaxMs: 9000,    // 收集翻页最大间隔（实际取区间内随机值）
   logEnabled: true,        // 日志开关：关闭时 addLog 直接丢弃日志

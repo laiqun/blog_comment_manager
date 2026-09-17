@@ -5,8 +5,9 @@
  *   填表/提交/高亮按表单所在 frameId 定向）→ 采集页面信息（验证码/登录/表单检查，非 AI）
  *   → 全自动：AI 表单识别 → AI 生成评论 → 自动填表 → 直接提交
  *   → 半自动：停在 awaiting_steps，由浮层按钮手动触发（「生成评论」与「识别表单」互不依赖、
- *     可任意顺序执行，生成评论可反复点击换一条；「填写表单」需评论已生成），
- *     填表后进入 awaiting_review 等人工 Submit / Skip
+ *     可任意顺序执行；步骤按钮不置灰、可反复点击，同一步骤的并发触发由 onStep 的
+ *     stepBusy 去重忽略；「填写表单」需评论已生成），
+ *     填表后进入 awaiting_review 等人工 Submit / Skip（此阶段步骤仍可重跑并覆盖重填）
  *   发布成功写 published 表 + 任务计数
  *   失败（超时/无表单/验证码/填表/提交失败等）保留标签页不关闭，便于人工接管；
  *   半自动模式找不到表单不判失败，直接进入手动流程（可重试识别或复制评论手动粘贴）
@@ -34,6 +35,8 @@ export class PublishRunner {
   constructor(notify) {
     this.notify = notify;
     this.busy = false;
+    // 正在执行中的浮层步骤：按钮不置灰可重复点击，靠这里忽略同一步骤的并发触发
+    this.stepBusy = new Set();
   }
 
   async startTask(taskId) {
@@ -203,10 +206,13 @@ export class PublishRunner {
       if (hit) refDomain = hit.targetDomain || '';
     } catch { /* 查不到则定位按钮会提示 */ }
     if (task.mode !== 'auto') {
+      // stepTimeoutMs：浮层步骤按钮的看门狗时长——一步最多串行 3 次 AI 调用（摘要/评论/身份），
+      // 超时后浮层自行解锁按钮，防止 SW 被回收导致按钮永久禁用
+      const stepTimeoutMs = (Number(st.settings.aiTimeoutMs) || 20000) * 3 + 30000;
       await chrome.scripting.executeScript({
         target: { tabId },
         func: (cfg) => window.__BCM_PUB__ && window.__BCM_PUB__.showOverlay(cfg),
-        args: [{ lang: st.settings.language, refDomain, resourceUrl: url }],
+        args: [{ lang: st.settings.language, refDomain, resourceUrl: url, stepTimeoutMs }],
       }).catch(() => {});
     }
     const d = await this.detectAll(tabId).catch(() => null);
@@ -286,7 +292,7 @@ export class PublishRunner {
           articleLang: art.language,
         },
       );
-      addLog('ai', comment.includes('<a') ? '评论生成完成（正文内嵌链接）' : '评论生成完成（未带链接：AI 判断与文章无自然交集）', 'success', url);
+      addLog('ai', comment.includes('<a') ? '评论生成完成（正文内嵌链接）' : '评论生成完成', 'success', url);
     } catch (e) {
       return this.recordKeepTab(task, rt, url, 'fail', `评论生成失败：${e.message}`);
     }
@@ -324,9 +330,13 @@ export class PublishRunner {
   async onStep(resourceUrl, step) {
     const st = getState();
     const rt = st.publishRuntime;
-    if (!rt || rt.resourceUrl !== resourceUrl || rt.stage !== 'awaiting_steps') return;
+    // awaiting_review（已填表待确认）也允许重跑步骤：对填入内容不满意可重新生成/识别后再填
+    if (!rt || rt.resourceUrl !== resourceUrl || (rt.stage !== 'awaiting_steps' && rt.stage !== 'awaiting_review')) return;
     const task = findTask(rt.taskId);
     if (!task) return;
+    // 同一步骤正在执行时忽略重复触发（浮层按钮不置灰，防并发在这里兜底）
+    if (this.stepBusy.has(step)) return;
+    this.stepBusy.add(step);
     const tabId = rt.tabId;
     const m = rt.manual || {};
 
@@ -360,7 +370,8 @@ export class PublishRunner {
         rt.manual = { ...m, title: (d && d.title) || m.title, excerpt: (d && d.excerpt) || m.excerpt, form, frameId };
         // 滚动到识别出的表单并高亮（在表单所在框架执行），让人工确认 AI 的识别结果
         if (form) await this.frameCall(tabId, frameId, 'markForm', form);
-        await this.overlayCall(tabId, 'setStep', 'genComment');
+        // 评论已生成过时回到 fill 阶段（保住「自动填写表单」的可点状态），否则推进到生成评论
+        await this.overlayCall(tabId, 'setStep', rt.manual.comment ? 'fill' : 'genComment');
       } else if (step === 'genComment') {
         // 不依赖表单识别结果：识别失败也照常生成评论，展示在浮层上供手动复制
         await this.overlayCall(tabId, 'setStatus', 'generating');
@@ -382,7 +393,7 @@ export class PublishRunner {
             articleLang: art.language,
           },
         );
-        addLog('ai', comment.includes('<a') ? '评论生成完成（正文内嵌链接）' : '评论生成完成（未带链接：AI 判断与文章无自然交集）', 'success', resourceUrl);
+        addLog('ai', comment.includes('<a') ? '评论生成完成（正文内嵌链接）' : '评论生成完成', 'success', resourceUrl);
         let identity;
         try {
           identity = await generateIdentity({ title: art.title, text: art.summary });
@@ -417,6 +428,8 @@ export class PublishRunner {
       await this.overlayCall(tabId, 'setStatus', `步骤失败：${e.message}`);
       await this.overlayCall(tabId, 'setStep', step); // 重新允许点击该步骤重试
       await this.notify(['publishRuntime', 'logs']);
+    } finally {
+      this.stepBusy.delete(step);
     }
   }
 

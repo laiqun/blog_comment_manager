@@ -33,16 +33,29 @@ export async function chat(role, messages, { maxTokens = 1000, temperature = 0.4
     reasoning: { effort: LIMITS.aiReasoningEffort },
   };
   if (json) body.response_format = { type: 'json_object' };
-  const res = await fetch(`${API_BASE}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${key}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://localhost/extension',
-      'X-Title': 'Blog Comment Backlink Manager',
-    },
-    body: JSON.stringify(body),
-  });
+  // 超时主动中止：请求挂死时 SW 会一直等，浮层步骤按钮就被永久禁用
+  const timeoutMs = Number(settings.aiTimeoutMs) || 20000;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let res;
+  try {
+    res = await fetch(`${API_BASE}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://localhost/extension',
+        'X-Title': 'Blog Comment Backlink Manager',
+      },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (ctrl.signal.aborted) throw new Error(`AI 请求超时（${Math.round(timeoutMs / 1000)} 秒），可在设置页调整`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     const text = await res.text().catch(() => '');
     throw new Error(`OpenRouter ${res.status}: ${text.slice(0, 200)}`);
@@ -197,7 +210,8 @@ export function buildCommentWithLink(text, targetUrl, fallbackAnchor) {
 /**
  * 评论生成：自然相关评论（语言跟随文章）+ 正文内嵌主关键词变体锚链接（website 字段留空，链接只走正文）。
  * 入参 title/text 是 AI 生成的标题与摘要，articleLang 是识别出的文章语言（提示词里显式指定评论语言）。
- * 链接必须与文章有真实交集才放：模型未输出 {{LINK:}} 占位符时视为「找不到自然交集」，不强插链接。
+ * 链接是硬性要求（不带链接的评论对本工具无效）：模型未输出 {{LINK:}} 占位符时加强措辞重试一次，
+ * 仍无占位符则抛错——全自动记失败并保留标签页，半自动浮层报错可重新生成。
  */
 export async function generateComment({ url, title, text }, { targetUrl, siteIntro = '', mainKeyword = '', articleLang = '' } = {}) {
   const system = [
@@ -209,11 +223,12 @@ export async function generateComment({ url, title, text }, { targetUrl, siteInt
     '要求：2-4 句，口语化、具体地回应文章观点；像真人，不要奉承开头（不要用 "Great post!" 这类空洞话）；',
     '不要出现 markdown；不要暴露你是 AI。',
     targetUrl ? [
-      '评论中要用 {{LINK:锚文本}} 占位符标出提到我网站的链接位置（最多一次）。',
+      '评论中要用 {{LINK:锚文本}} 占位符标出提到我网站的链接位置（必须且仅一次）。',
       '关键要求——链接必须与文章正文有真实交集：先从摘要里找一个和我的网站主题能自然衔接的场景、需求或步骤，',
       '围绕它写一句你自己的真实经历或看法，再把链接嵌进这一句里，让读者觉得提到这个网站顺理成章。',
       '禁止生硬插入：不要在无关句子的句尾甩链接，不要用 "顺便推荐一个网站" 这类突兀话术。',
-      '如果真的找不到自然交集，就完全不提我的网站、也不要输出占位符——宁缺毋滥。',
+      '占位符绝不能省略：找不到直接交集时，就写使用这类产品/服务的通用真实体验，把链接嵌进那句里；',
+      '哪怕只是使用场景相似也要自然带出——不带链接的评论是无效评论。',
       `锚文本要求：基于我的主关键词「${mainKeyword || siteIntro || targetUrl}」做变体——可加相关前缀/后缀、同义词或长尾组合`,
       '（例如 "best X"、"X for beginners"、"cheap X alternatives"），不要每次都用一模一样的裸关键词；锚文本要与所在句子的语义连贯。',
       `我的网站：${targetUrl}${siteIntro ? `\n网站介绍：${siteIntro}` : ''}`,
@@ -226,15 +241,18 @@ export async function generateComment({ url, title, text }, { targetUrl, siteInt
     '文章摘要:',
     (text || '').slice(0, LIMITS.articleTextChunk),
   ].join('\n');
-  const out = await chat('commentGen', [
-    { role: 'system', content: system },
+  const call = (extra) => chat('commentGen', [
+    { role: 'system', content: extra ? `${system}\n${extra}` : system },
     { role: 'user', content: user },
   ], { maxTokens: 1500, temperature: 0.8, json: false });
-  const cleaned = out.trim();
-  if (!targetUrl) return cleaned.replace(/\s*\{\{LINK:[^}]+\}\}/g, '');
-  // 模型未输出占位符 = 它判断找不到自然交集：尊重判断，不在句尾硬插链接
-  if (!/\{\{LINK:[^}]*\}\}/.test(cleaned)) return cleaned;
-  return buildCommentWithLink(cleaned, targetUrl, mainKeyword || 'this website');
+
+  const first = (await call()).trim();
+  if (!targetUrl) return first.replace(/\s*\{\{LINK:[^}]+\}\}/g, '');
+  if (/\{\{LINK:[^}]*\}\}/.test(first)) return buildCommentWithLink(first, targetUrl, mainKeyword || 'this website');
+  // 不带链接的评论对本工具是无效评论：加强措辞重试一次，仍无占位符则报错（上层记失败/浮层可重试）
+  const retry = (await call('注意：上一次输出没有包含 {{LINK:锚文本}} 占位符，这次必须包含且仅一次——从摘要里找与我网站主题最接近的点自然带出。')).trim();
+  if (/\{\{LINK:[^}]*\}\}/.test(retry)) return buildCommentWithLink(retry, targetUrl, mainKeyword || 'this website');
+  throw new Error('评论未带链接：AI 两次输出都未包含链接占位符');
 }
 
 /** 链接发现：从列表页 HTML 提取候选文章链接（拦截不到 API 时的兜底） */

@@ -7,11 +7,13 @@
  * 评论生成后由 showComment 把评论/昵称/邮箱展示在浮层上，每个字段带复制按钮，
  * 识别或填表失败时可手动粘贴。
  * 半自动模式下页面一打开就显示浮层（showOverlay），AI 步骤（生成评论/识别表单/填写表单）
- * 不自动执行，由浮层上的步骤按钮手动触发（setStep 控制可点项；「AI 生成评论」与
- * 「AI 识别评论表单」互不依赖可同时点击，且生成评论可反复执行换一条；
+ * 不自动执行，由浮层上的步骤按钮手动触发（按钮点击不置灰、可反复点击，同一步骤的
+ * 并发触发由后台去重；「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」全程可点，
  * 「自动填写表单」需评论生成后才解锁），填表完成后才解锁
- * Submit / Skip；浮层上的「定位目标链接」按钮可循环跳转到页面中包含收集目标域名
+ * Submit / Skip（步骤按钮不锁定：对填入内容不满意可重跑步骤后再点填写覆盖重填）；浮层上的「定位目标链接」按钮可循环跳转到页面中包含收集目标域名
  * （同行站点）的锚点，供人工参考已有外链。
+ * 步骤按钮点击后带看门狗计时器（stepTimeoutMs，由后台按 aiTimeoutMs 推算传入）：
+ * 后台 SW 被回收或请求挂死导致没有回包时，到点在浮层提示「可再点一次重试」。
  */
 (function () {
   if (window.__BCM_PUB__) return;
@@ -50,6 +52,7 @@
       copied: '已复制 ✓',
       minimize: '最小化',
       restore: '展开评论助手',
+      stepNoResp: '请求超时或后台无响应，可直接再点一次重试。',
     },
     en: {
       title: 'Comment Assistant',
@@ -81,6 +84,7 @@
       copied: 'Copied ✓',
       minimize: 'Minimize',
       restore: 'Expand comment assistant',
+      stepNoResp: 'Request timed out or no response from background — just click again to retry.',
     },
   };
 
@@ -478,7 +482,7 @@
     const status = document.createElement('div');
     status.style.cssText = 'color:#d1d5db;font-size:12.5px;line-height:1.6;margin-bottom:14px;white-space:pre-line;';
 
-    // 步骤按钮：AI 操作不自动执行，由人工逐个点击触发
+    // 步骤按钮：AI 操作不自动执行，由人工逐个点击触发；点击不置灰，可随时重复点击
     const stepCol = document.createElement('div');
     stepCol.style.cssText = 'display:flex;flex-direction:column;gap:6px;margin-bottom:10px;';
     const mkStep = (key, label) => {
@@ -486,10 +490,11 @@
       b.textContent = label;
       b.style.cssText = 'width:100%;padding:7px 10px;border:none;border-radius:8px;background:#2d3450;color:#e5e7eb;font-size:12.5px;cursor:pointer;text-align:left;box-sizing:border-box;';
       b.addEventListener('click', () => {
-        b.disabled = true;
-        b.style.opacity = '.45';
-        b.style.cursor = 'not-allowed';
-        chrome.runtime.sendMessage({ type: 'pub:step', resourceUrl: overlayCfg.resourceUrl, step: key }).catch(() => {});
+        // 看门狗：后台 SW 被回收/请求挂死导致没有回包时给出提示（同一步骤的并发去重由后台负责）
+        const watchdog = setTimeout(() => setStatus(strings().stepNoResp), overlayCfg.stepTimeoutMs || 90000);
+        chrome.runtime.sendMessage({ type: 'pub:step', resourceUrl: overlayCfg.resourceUrl, step: key })
+          .then(() => clearTimeout(watchdog))
+          .catch(() => { clearTimeout(watchdog); setStatus(strings().stepNoResp); });
       });
       return b;
     };
@@ -561,9 +566,8 @@
 
   /**
    * 切换可点的步骤按钮，并更新状态文案；key ∈ summarize/genComment/detectForm/fill/done。
-   * 「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」互不依赖，可同时点击；
-   * 「获取标题与摘要」「AI 生成评论」可反复执行（点一次生成一份新的，不满意就再点），进入填写阶段后仍保持可点；
-   * 「自动填写表单」需评论已生成，由后台推进到 fill 时才解锁。
+   * 四个步骤按钮全程保持可点、可反复触发（识别表单每点一次就重新采集并重走 AI 识别；
+   * 填表完成后也不锁定——对填入内容不满意可重新生成评论/识别表单后再点「自动填写表单」覆盖重填）。
    */
   function setStep(key) {
     if (!overlayEls || !overlayEls.steps) return;
@@ -571,8 +575,8 @@
       summarize: ['summarize', 'genComment', 'detectForm'],
       genComment: ['summarize', 'genComment', 'detectForm'],
       detectForm: ['summarize', 'genComment', 'detectForm'],
-      fill: ['summarize', 'genComment', 'fill'],
-      done: [],
+      fill: ['summarize', 'genComment', 'detectForm', 'fill'],
+      done: ['summarize', 'genComment', 'detectForm', 'fill'],
     }[key] || [];
     for (const [k, b] of Object.entries(overlayEls.steps)) {
       const on = enabled.includes(k);

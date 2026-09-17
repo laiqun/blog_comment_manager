@@ -160,6 +160,7 @@ export const MESSAGES = {
   publishModeLabel: { zh: '默认发布模式', en: 'Default Publish Mode' },
   languageLabel: { zh: '界面语言', en: 'UI Language' },
   summaryLangLabel: { zh: '标题与摘要语言', en: 'Title & Summary Language' },
+  aiTimeoutLabel: { zh: 'AI 请求超时（秒）', en: 'AI Request Timeout (s)' },
 
   // ---- 发布浮层（content script）----
   overlayTitle: { zh: 'Comment Ready', en: 'Comment Ready' },

@@ -70,6 +70,17 @@ test('testKey：401 返回 ok:false，200 返回 ok:true', async () => {
   assert.equal(good.label, 'my-key');
 });
 
+test('chat 超过 aiTimeoutMs 主动中止并报超时', async () => {
+  getState().settings.openrouterKey = 'test-key';
+  getState().settings.aiTimeoutMs = 50;
+  // fetch 挂死只在 abort 时 reject：验证超时由客户端主动中止
+  globalThis.fetch = (url, init) => new Promise((_, rej) => {
+    init.signal.addEventListener('abort', () => rej(new DOMException('Aborted', 'AbortError')));
+  });
+  await assert.rejects(chat('classify', [{ role: 'user', content: 'hi' }]), /超时/);
+  getState().settings.aiTimeoutMs = 20000; // 还原，避免影响其他用例
+});
+
 test('chat 请求体带低强度 reasoning（防思考模型吃光 max_tokens）', async () => {
   let captured;
   globalThis.fetch = async (url, init) => {
@@ -118,21 +129,42 @@ test('generateComment 评论语言跟随文章语言', async () => {
   assert.ok(captured.messages[0].content.includes('与文章相同的语言'));
 });
 
-test('generateComment 无占位符时不强插链接（AI 判断无交集）', async () => {
+test('generateComment 链接是硬性要求：无占位符重试一次，仍无则报错', async () => {
   const { generateComment } = await import('../extension/lib/openrouter.js');
+  // 两次都无占位符 → 报错（不带链接的评论无效）
   globalThis.fetch = async () => ({
     ok: true, status: 200,
     json: async () => ({ choices: [{ message: { content: 'This article really resonates with me.' } }] }),
   });
+  await assert.rejects(
+    generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, { targetUrl: 'https://x.com/', mainKeyword: 'kw' }),
+    /未带链接/,
+  );
+  // 第一次无占位符、第二次有 → 重试成功，且确实调了两次
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    const content = calls === 1
+      ? 'Solid breakdown, learned a lot.'
+      : 'I made one with {{LINK:this free tool}} last week.';
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+  };
   const out = await generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, { targetUrl: 'https://x.com/', mainKeyword: 'kw' });
-  assert.ok(!out.includes('<a'), '无占位符时不应在句尾硬插链接');
-  // 有占位符时正常替换为 <a>
-  globalThis.fetch = async () => ({
-    ok: true, status: 200,
-    json: async () => ({ choices: [{ message: { content: 'I made one with {{LINK:this free tool}} last week.' } }] }),
-  });
-  const out2 = await generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, { targetUrl: 'https://x.com/', mainKeyword: 'kw' });
-  assert.ok(out2.includes('<a href="https://x.com/\n">this free tool</a>'));
+  assert.equal(calls, 2);
+  assert.ok(out.includes('<a href="https://x.com/\n">this free tool</a>'));
+  // 第一次就带占位符 → 不重试
+  calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'I used {{LINK:kw pro}} for this.' } }] }) };
+  };
+  await generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, { targetUrl: 'https://x.com/', mainKeyword: 'kw' });
+  assert.equal(calls, 1);
+  // 无 targetUrl：剥掉占位符即可，不报错不重试
+  calls = 0;
+  const noLink = await generateComment({ url: 'https://a.com/1', title: 't', text: 's' }, {});
+  assert.equal(calls, 1);
+  assert.ok(!noLink.includes('{{LINK'));
 });
 
 test('buildCommentWithLink：占位符替换、href 右引号前换行、无占位符时追加', async () => {

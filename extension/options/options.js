@@ -32,6 +32,7 @@ function saveSettings() {
           publishMode: settings.publishMode,
           language: settings.language,
           summaryLang: settings.summaryLang,
+          aiTimeoutMs: settings.aiTimeoutMs,
         },
       });
       flash.classList.add('show');
@@ -105,6 +106,14 @@ async function init() {
 
   $('#summary-lang').value = settings.summaryLang || 'zh';
   $('#summary-lang').addEventListener('change', (e) => { settings.summaryLang = e.target.value; saveSettings(); });
+
+  // AI 请求超时：界面填秒，存储为毫秒
+  const timeoutEl = $('#ai-timeout');
+  timeoutEl.value = Math.round((settings.aiTimeoutMs || 20000) / 1000);
+  timeoutEl.addEventListener('change', () => {
+    settings.aiTimeoutMs = Math.round(Number(timeoutEl.value) || 20) * 1000;
+    saveSettings();
+  });
 
   $('#lang-select').addEventListener('change', (e) => {
     settings.language = e.target.value;

@@ -418,6 +418,10 @@ async function handleMessage(msg, sender) {
         st.settings.pageDelayMinMs = min;
         st.settings.pageDelayMaxMs = max;
       }
+      // AI 单次请求超时（毫秒），收敛到 5s-300s
+      if (patch.aiTimeoutMs != null) {
+        st.settings.aiTimeoutMs = Math.min(Math.max(Number(patch.aiTimeoutMs) || 20000, 5000), 300000);
+      }
       await save('settings');
       broadcast();
       return { ok: true, snapshot: await snapshot() };
