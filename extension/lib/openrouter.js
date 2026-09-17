@@ -255,6 +255,26 @@ export async function generateComment({ url, title, text }, { targetUrl, siteInt
   throw new Error('评论未带链接：AI 两次输出都未包含链接占位符');
 }
 
+/**
+ * 评论译文：把生成的评论翻译成用户阅读语言（lang ∈ zh/en，与摘要语言一致），
+ * 仅供半自动浮层展示给用户看，不参与填表。评论里可能带 <a> 标签，译文输出纯文本。
+ */
+export async function translateComment(comment, lang = 'zh') {
+  const langName = lang === 'en' ? '英文' : '中文';
+  const system = [
+    `你是翻译助手。把给定的博客评论翻译成${langName}，忠实原意、保持口语化语气。`,
+    '评论中可能含有 HTML 标签（如 <a>）：翻译时去掉所有 HTML 标签，只保留纯文本。',
+    '只输出译文本身，不要输出任何解释。',
+  ].join('\n');
+  const text = await chat('commentGen', [
+    { role: 'system', content: system },
+    { role: 'user', content: String(comment || '').slice(0, 2000) },
+  ], { maxTokens: 800, temperature: 0.3, json: false });
+  const out = text.trim().slice(0, 2000);
+  if (!out) throw new Error('译文为空');
+  return out;
+}
+
 /** 链接发现：从列表页 HTML 提取候选文章链接（拦截不到 API 时的兜底） */
 export async function discoverLinks(html, baseUrl) {
   const system = [

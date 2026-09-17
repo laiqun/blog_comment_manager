@@ -4,7 +4,8 @@
  *   detect / fill / submit / cleanup / showOverlay / setStatus / setStep / markForm / showComment。
  * 「AI 识别评论表单」完成后由后台调用 markForm：滚动到识别出的评论框并加蓝色高亮，
  * 让人工确认 AI 找到的是哪个表单（与红色「定位目标链接」标记互不干扰）；
- * 评论生成后由 showComment 把评论/昵称/邮箱展示在浮层上，每个字段带复制按钮，
+ * 评论生成后由 showComment 把评论/评论译文/昵称/邮箱展示在浮层上，每个字段带复制按钮
+ * （译文仅供用户阅读，不参与填表），
  * 识别或填表失败时可手动粘贴。
  * 半自动模式下页面一打开就显示浮层（showOverlay），AI 步骤（生成评论/识别表单/填写表单）
  * 不自动执行，由浮层上的步骤按钮手动触发（按钮点击不置灰、可反复点击，同一步骤的
@@ -43,6 +44,7 @@
       noTarget: '未找到该资源对应的收集目标域名',
       noLink: '页面中未找到指向目标域名的链接',
       fieldComment: '评论内容',
+      fieldTranslation: '评论译文（仅供参考，不填入表单）',
       fieldName: '昵称',
       fieldEmail: '邮箱',
       fieldTitle: '标题',
@@ -75,6 +77,7 @@
       noTarget: 'No collect target domain found for this resource',
       noLink: 'No link pointing to the target domain was found on this page',
       fieldComment: 'Comment',
+      fieldTranslation: 'Translation (reference only, not filled)',
       fieldName: 'Name',
       fieldEmail: 'Email',
       fieldTitle: 'Title',
@@ -362,7 +365,7 @@
   }
 
   /** 字段展示行：label + 复制按钮 + 只读输入框/文本域（showSummary / showComment 共用），rows 控制多行高度 */
-  function addFieldRow(box, label, val, multi, rows) {
+  function fieldRow(label, val, multi, rows) {
     const s = strings();
     const rowEl = document.createElement('div');
     const lab = document.createElement('div');
@@ -381,7 +384,11 @@
     input.style.cssText = 'width:100%;box-sizing:border-box;background:#111420;border:1px solid #2d3450;border-radius:6px;color:#e5e7eb;font-size:12px;padding:5px 7px;resize:vertical;';
     rowEl.appendChild(lab);
     rowEl.appendChild(input);
-    box.appendChild(rowEl);
+    return rowEl;
+  }
+
+  function addFieldRow(box, label, val, multi, rows) {
+    box.appendChild(fieldRow(label, val, multi, rows));
   }
 
   /** 「获取标题与摘要」完成后：在浮层展示标题、摘要与文章语言（各带复制按钮） */
@@ -391,7 +398,7 @@
     const box = overlayEls.summaryBox;
     box.innerHTML = '';
     if (fields.title) addFieldRow(box, s.fieldTitle, fields.title, false);
-    if (fields.summary) addFieldRow(box, s.fieldSummary, fields.summary, true, 8);
+    if (fields.summary) addFieldRow(box, s.fieldSummary, fields.summary, true, 12);
     if (fields.language) addFieldRow(box, s.fieldLang, fields.language, false);
     box.style.display = (fields.title || fields.summary || fields.language) ? 'flex' : 'none';
   }
@@ -402,20 +409,25 @@
     const s = strings();
     const box = overlayEls.fieldsBox;
     box.innerHTML = '';
-    const defs = [
-      ['comment', s.fieldComment, true],
-      ['name', s.fieldName, false],
-      ['email', s.fieldEmail, false],
-    ];
-    for (const [key, label, multi] of defs) {
-      const val = fields[key];
-      if (!val) continue;
-      addFieldRow(box, label, val, multi);
+    if (fields.comment) addFieldRow(box, s.fieldComment, fields.comment, true, 8);
+    // 评论译文仅展示给用户看，不参与填表
+    if (fields.translation) addFieldRow(box, s.fieldTranslation, fields.translation, true, 6);
+    // 昵称和邮箱并排一行，节约空间
+    if (fields.name || fields.email) {
+      const pair = document.createElement('div');
+      pair.style.cssText = 'display:flex;gap:8px;';
+      for (const [key, label] of [['name', s.fieldName], ['email', s.fieldEmail]]) {
+        if (!fields[key]) continue;
+        const r = fieldRow(label, fields[key], false);
+        r.style.cssText = 'flex:1;min-width:0;';
+        pair.appendChild(r);
+      }
+      box.appendChild(pair);
     }
     box.style.display = 'flex';
   }
 
-  // ---------- 最小化：浮层收起为右下角半透明小球，点小球恢复原浮层 ----------
+  // ---------- 最小化：浮层收起为半透明小球，点小球恢复原浮层；小球可按住拖动换位 ----------
 
   function minimizeOverlay() {
     const wrap = document.getElementById(OVERLAY_ID);
@@ -429,14 +441,52 @@
     ball.textContent = '💬';
     ball.style.cssText = [
       'position:fixed', 'right:16px', 'bottom:16px', 'width:44px', 'height:44px',
-      'border-radius:50%', 'z-index:2147483647', 'cursor:pointer', 'user-select:none',
+      'border-radius:50%', 'z-index:2147483647', 'cursor:grab', 'user-select:none',
       'background:rgba(74,158,255,.45)', 'font-size:20px',
       'display:flex', 'align-items:center', 'justify-content:center',
       'box-shadow:0 4px 16px rgba(0,0,0,.35)', 'transition:background .15s',
+      'touch-action:none',
     ].join(';');
     ball.addEventListener('mouseenter', () => (ball.style.background = 'rgba(74,158,255,.8)'));
     ball.addEventListener('mouseleave', () => (ball.style.background = 'rgba(74,158,255,.45)'));
-    ball.addEventListener('click', restoreOverlay);
+
+    // 拖动换位：按住移动超过阈值视为拖动（切到 left/top 定位并夹紧在视口内），
+    // 拖动后不触发点击展开；原地松手才算点击恢复原浮层
+    let dragging = false, moved = false, startX = 0, startY = 0, startLeft = 0, startTop = 0;
+    ball.addEventListener('pointerdown', (e) => {
+      dragging = true;
+      moved = false;
+      startX = e.clientX;
+      startY = e.clientY;
+      const r = ball.getBoundingClientRect();
+      startLeft = r.left;
+      startTop = r.top;
+      try { ball.setPointerCapture(e.pointerId); } catch { /* 忽略 */ }
+    });
+    ball.addEventListener('pointermove', (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (!moved && Math.hypot(dx, dy) < 4) return;
+      moved = true;
+      ball.style.cursor = 'grabbing';
+      const w = ball.offsetWidth;
+      const h = ball.offsetHeight;
+      const left = Math.min(Math.max(0, startLeft + dx), window.innerWidth - w);
+      const top = Math.min(Math.max(0, startTop + dy), window.innerHeight - h);
+      ball.style.right = 'auto';
+      ball.style.bottom = 'auto';
+      ball.style.left = left + 'px';
+      ball.style.top = top + 'px';
+    });
+    ball.addEventListener('pointerup', () => {
+      dragging = false;
+      ball.style.cursor = 'grab';
+    });
+    ball.addEventListener('click', () => {
+      if (moved) { moved = false; return; } // 刚拖完不展开
+      restoreOverlay();
+    });
     document.documentElement.appendChild(ball);
   }
 
@@ -455,9 +505,9 @@
     const wrap = document.createElement('div');
     wrap.id = OVERLAY_ID;
     wrap.style.cssText = [
-      'position:fixed', 'right:16px', 'bottom:16px', 'width:440px', 'z-index:2147483647',
-      'max-height:85vh', 'overflow-y:auto', 'overscroll-behavior:contain',
-      'background:#1c1f2e', 'border-radius:12px', 'padding:16px', 'box-sizing:border-box',
+      'position:fixed', 'right:0', 'top:0', 'width:440px', 'z-index:2147483647',
+      'height:100vh', 'overflow-y:auto', 'overscroll-behavior:contain',
+      'background:#1c1f2e', 'border-radius:12px 0 0 12px', 'padding:16px', 'box-sizing:border-box',
       'box-shadow:0 8px 32px rgba(0,0,0,.45)', 'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif',
     ].join(';');
 

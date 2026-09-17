@@ -167,6 +167,25 @@ test('generateComment 链接是硬性要求：无占位符重试一次，仍无�
   assert.ok(!noLink.includes('{{LINK'));
 });
 
+test('translateComment 按目标语言翻译，译文为空时报错', async () => {
+  const { translateComment } = await import('../extension/lib/openrouter.js');
+  let captured;
+  globalThis.fetch = async (url, init) => {
+    captured = JSON.parse(init.body);
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: '  这条评论写得很好。 ' } }] }) };
+  };
+  const out = await translateComment('<a href="https://x.com/\n">nice tool</a> helped me a lot', 'zh');
+  assert.equal(out, '这条评论写得很好。', '译文应去掉首尾空白');
+  assert.ok(captured.messages[0].content.includes('中文'), '提示词应要求翻译成中文');
+  assert.ok(captured.messages[0].content.includes('HTML'), '提示词应要求剥掉 HTML 标签');
+  // 目标英文
+  await translateComment('评论', 'en');
+  assert.ok(captured.messages[0].content.includes('英文'));
+  // 空译文报错（上层记 warn，不影响发布）
+  stubFetch('   ');
+  await assert.rejects(translateComment('评论', 'zh'), /译文为空/);
+});
+
 test('buildCommentWithLink：占位符替换、href 右引号前换行、无占位符时追加', async () => {
   const { buildCommentWithLink } = await import('../extension/lib/openrouter.js');
   // 占位符替换

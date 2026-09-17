@@ -15,7 +15,7 @@
 import { getState, save, addLog, findTask } from '../lib/storage.js';
 import { PUBLISH_SELECTORS, LIMITS } from '../lib/config.js';
 import { idbGet, idbPut, idbGetAll } from '../lib/idb.js';
-import { detectForm, generateComment, checkRelevance, generateIdentity, summarizeArticle } from '../lib/openrouter.js';
+import { detectForm, generateComment, checkRelevance, generateIdentity, summarizeArticle, translateComment } from '../lib/openrouter.js';
 import { waitTabComplete, sleep } from '../lib/util.js';
 
 /** AI 表单识别失败时的兜底选择器（WordPress 默认评论表单） */
@@ -29,6 +29,13 @@ function defaultForm() {
     saveInfo: PUBLISH_SELECTORS.saveInfo[0],
     linkMethod: 'website_field',
   };
+}
+
+/** 文章语言是否就是用户阅读语言（一致则评论译文没有存在必要，省下这次 AI 调用） */
+function langMatches(artLang, target) {
+  const a = String(artLang || '').toLowerCase();
+  if (!a) return false;
+  return target === 'en' ? /(en|英)/.test(a) : /(中|zh|chinese)/.test(a);
 }
 
 export class PublishRunner {
@@ -403,9 +410,20 @@ export class PublishRunner {
           identity = { name: st.settings.identity.name, email: st.settings.identity.email };
         }
         identity.website = ''; // 网址字段留空，链接只通过评论正文的 <a> 传递
+        // 评论译文：仅展示给用户看（评论语言跟随文章，用户未必读得懂），不参与填表；
+        // 文章语言与阅读语言一致时跳过；翻译失败不影响主流程
+        let translation = '';
+        const readLang = st.settings.summaryLang || 'zh';
+        if (!langMatches(art.language, readLang)) {
+          try {
+            translation = await translateComment(comment, readLang);
+          } catch (e) {
+            addLog('ai', `评论译文生成失败（不影响发布）：${e.message}`, 'warn', resourceUrl);
+          }
+        }
         rt.manual = { ...rt.manual, sumTitle: art.title, summary: art.summary, artLang: art.language, comment, identity };
         // 评论与身份信息展示到浮层，每个字段带复制按钮
-        await this.overlayCall(tabId, 'showComment', { comment, name: identity.name, email: identity.email });
+        await this.overlayCall(tabId, 'showComment', { comment, translation, name: identity.name, email: identity.email });
         await this.overlayCall(tabId, 'setStep', 'fill');
       } else if (step === 'fill') {
         if (!m.comment) throw new Error('请先执行前面的步骤');

@@ -54,7 +54,7 @@ test/                        # Node 自带 node:test 单测（见下）
 - **MV3 service worker 随时被回收**：所有状态落盘后才能丢；`chrome.alarms`（`bcm-tick`，30 秒）负责唤醒续跑收集/发布队列，并把回收途中卡住的 `stopping` 状态收尾为 `idle`；`onInstalled`/`onStartup` 做断点续跑。
 - **UI ↔ 后台通信**：sidepanel 用 `sendMessage` RPC（`getSnapshot`、`startCollect`、`createTask`、`setSettings` 等）；后台状态推送走 `chrome.runtime.sendMessage` 单向广播（`stateChanged` 快照），**不用 port 长连接**——无连接状态，SW 回收重启后新实例照样送达，面板关着时静默丢弃、打开时由 `init()` 的 `getSnapshot` 追平。**设置的唯一写入口是 `setSettings` 消息**，options 页也不得直接写 storage（会被后台内存态覆盖）。
 - **收集统计口径**：空闲时（`getSnapshot` 触发，3 秒去抖）从 IndexedDB 重新计算已发现/已分析/队列中/命中（见 `service-worker.js` 的 `refreshCollectStatsFromIdb`）。
-- **AI 调用**：全走 OpenRouter `/chat/completions`，`chatJSON` 要求 `json_object` 输出并有脏输出兜底提取；四个角色模型可在设置页分别配置，默认 `z-ai/glm-5.3-flash`；调用间有 `aiDelayMs` 节流；单次请求有 `aiTimeoutMs` 超时（默认 20s，设置页按秒配置，5-300s 收敛），超时用 AbortController 主动中止——请求挂死会把浮层步骤按钮永久卡住。所有请求带 `reasoning: { effort: 'low' }`（GLM 这类思考模型默认推理很长，会把 `max_tokens` 吃光导致 `content` 为空、`finish_reason: length`），且各角色的 `maxTokens` 预算已按「思考 + 正文」留足。发布时先用 `summarizeArticle`（复用 classify 模型）把可能截断的正文提炼成标题+摘要并识别文章语言（标题/摘要的输出语言由 `settings.summaryLang` 决定，默认中文，设置页可改），相关性判断/评论生成/身份生成统一吃摘要，**评论语言跟随文章语言**（`generateComment` 的 `articleLang` 参数，识别不到时仅要求与文章一致）；半自动模式摘要缓存于 `rt.manual.summary`/`sumTitle`/`artLang`，反复生成评论不重复总结；摘要失败退回原标题+原始摘录。半自动浮层有独立「获取标题与摘要」步骤按钮，结果（含文章语言）连同评论/身份一起展示在浮层上（各字段带复制按钮）。评论内嵌链接用 `{{LINK:锚文本}}` 占位符，由 `buildCommentWithLink` 替换为 `<a>`；链接是硬性要求（不带链接的评论无效）：提示词要求必须输出占位符且与摘要论点自然融合，模型未输出占位符时加强措辞重试一次，仍无则 `generateComment` 抛错——全自动记失败并保留标签页，半自动浮层报错可重新生成。
+- **AI 调用**：全走 OpenRouter `/chat/completions`，`chatJSON` 要求 `json_object` 输出并有脏输出兜底提取；四个角色模型可在设置页分别配置，默认 `z-ai/glm-5.3-flash`；调用间有 `aiDelayMs` 节流；单次请求有 `aiTimeoutMs` 超时（默认 20s，设置页按秒配置，5-300s 收敛），超时用 AbortController 主动中止——请求挂死会把浮层步骤按钮永久卡住。所有请求带 `reasoning: { effort: 'low' }`（GLM 这类思考模型默认推理很长，会把 `max_tokens` 吃光导致 `content` 为空、`finish_reason: length`），且各角色的 `maxTokens` 预算已按「思考 + 正文」留足。发布时先用 `summarizeArticle`（复用 classify 模型）把可能截断的正文提炼成标题+摘要并识别文章语言（标题/摘要的输出语言由 `settings.summaryLang` 决定，默认中文，设置页可改），相关性判断/评论生成/身份生成统一吃摘要，**评论语言跟随文章语言**（`generateComment` 的 `articleLang` 参数，识别不到时仅要求与文章一致）；半自动模式摘要缓存于 `rt.manual.summary`/`sumTitle`/`artLang`，反复生成评论不重复总结；摘要失败退回原标题+原始摘录。半自动浮层有独立「获取标题与摘要」步骤按钮，结果（含文章语言）连同评论/身份一起展示在浮层上（各字段带复制按钮）；评论语言跟随文章，用户未必读得懂，因此生成评论时附带一次 `translateComment` 译文（目标语言同 summaryLang，纯文本剥掉 HTML，仅浮层展示不填表；文章语言与阅读语言一致时跳过，失败仅记日志）。评论内嵌链接用 `{{LINK:锚文本}}` 占位符，由 `buildCommentWithLink` 替换为 `<a>`；链接是硬性要求（不带链接的评论无效）：提示词要求必须输出占位符且与摘要论点自然融合，模型未输出占位符时加强措辞重试一次，仍无则 `generateComment` 抛错——全自动记失败并保留标签页，半自动浮层报错可重新生成。
 - **数据源联调**：Semrush 走「面板模式」（已联调通过）：用户需先在 dash.3ue.co 打开工具并停留在 `sem.3ue.co` 标签，插件校验当前标签后取 URL 里的 `__gmitm` 令牌直达报告页。Ahrefs 是「直连模式」占位（`backlinksUrlTemplate` 等留空待联调）。新增数据源时只改 `lib/config.js` 的 `PROVIDERS`。
 
 ## 构建与测试命令
@@ -62,7 +62,7 @@ test/                        # Node 自带 node:test 单测（见下）
 无构建步骤。测试用 Node 自带 runner，零依赖：
 
 ```bash
-# 在仓库根目录运行全部测试（48 个用例）
+# 在仓库根目录运行全部测试（55 个用例）
 node --test test/*.test.mjs
 
 # 单个文件
