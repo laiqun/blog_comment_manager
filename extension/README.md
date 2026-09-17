@@ -15,7 +15,7 @@ extension/
 ├── manifest.json            # MV3 清单（storage/tabs/scripting/alarms/favicon + <all_urls>）
 ├── background/
 │   ├── service-worker.js    # 消息路由、快照广播、保活 alarm、断点续跑
-│   ├── collect.js           # 收集控制器：DOM 抓取表格行→点下一页翻页→「开始分析」逐条访问+AI 分类入库
+│   ├── collect.js           # 收集控制器：DOM 抓取表格行→点下一页翻页→「开始分析」逐条访问+规则判定入库
 │   └── publish.js           # 发布调度：任务逐条执行→表单识别→评论生成→填表→人工确认
 ├── content/
 │   ├── analyzer.js          # 页面分析器：标题/正文/评论表单/评论区信息采集
@@ -58,7 +58,7 @@ Semrush 走**面板模式**（已在 dash.3ue.co 联调通过）：先在 dash.3
 ## 使用流程
 
 1. **设置**：填 OpenRouter Key（可测试连接），默认四模型均为 `google/gemini-2.0-flash-001`；填写发布身份（昵称/邮箱/默认网址）
-2. **收集 → 分析（两步独立）**：先在 dash.3ue.co 点 Semrush「打开」并停留在工具页；输入同行域名点「开始收集」——只抓外链数据（自动只保留带「博客」标签的来源，每页间隔 5-10s，收完自动结束，可导出 CSV）；再点「开始分析」——才对数据集逐条访问页面 + AI 分类，命中入库「博客评论资源」
+2. **收集 → 分析（两步独立）**：先在 dash.3ue.co 点 Semrush「打开」并停留在工具页；输入同行域名点「开始收集」——只抓外链数据（自动只保留带「博客」标签的来源，每页间隔 5-10s，收完自动结束，可导出 CSV）；再点「开始分析」——才对数据集逐条访问页面做规则判定（要登录跳过 / 无评论表单不入库 / 有表单命中），命中入库「博客评论资源」
 3. **资源库**：点击 Tab 时直读 IndexedDB `analysis` 表（`reason=命中，可发布`），支持单条打开/立即发布/删除，导出 CSV
 4. **发布**：新建任务（绑定全部「可发布」资源 + 目标网址 + 模式）→ 自动逐条执行；半自动模式目标页面右下角弹「Comment Ready」浮层，人工点 Submit / Skip
 5. **日志**：收集/发布/AI/系统四类日志实时滚动
@@ -68,4 +68,4 @@ Semrush 走**面板模式**（已在 dash.3ue.co 联调通过）：先在 dash.3
 ## 说明
 
 - MV3 service worker 会被回收：任务/日志/设置等状态落 `chrome.storage.local`，大数据量表（backlinks / analysis / resources）只存 IndexedDB（唯一持久层）；`chrome.alarms` 每 30 秒唤醒续跑队列；半自动待审核不受影响
-- AI 全部走 OpenRouter `/chat/completions`，分类/表单识别要求 JSON 输出，评论生成为纯文本
+- AI 全部走 OpenRouter `/chat/completions`，表单识别/相关性判断要求 JSON 输出，评论生成为纯文本

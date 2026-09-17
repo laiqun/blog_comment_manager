@@ -347,7 +347,7 @@ function bindEvents() {
     }
   });
 
-  // 分析（对已收集的数据集逐条访问 + AI 分类）
+  // 分析（对已收集的数据集逐条访问 + 规则判定）
   $('#btn-analyze').addEventListener('click', async () => {
     const c = snap && snap.collect;
     const analyzeRunning = c && c.status === 'running' && (c.mode || 'collect') === 'analyze';

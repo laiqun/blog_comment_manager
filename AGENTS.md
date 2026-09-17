@@ -7,7 +7,7 @@
 这是一个 **Chrome MV3 浏览器扩展**（无构建步骤的纯 JavaScript），一款 SEO 外链建设辅助工具「博客评论外链管理器」。核心业务链路：
 
 1. **收集**：输入同行站点域名，复用用户已打开的 Semrush 工具页（经 dash.3ue.co 共享面板），纯 DOM 抓取反向链接表格（`a[data-test-source-url]` 行，只保留「博客」标签来源），点页面「下一页」按钮自动翻页，随机间隔 3-9 秒。不构造、不重放任何接口请求。
-2. **分析**：对收集到的外链逐条访问页面，AI（OpenRouter）分类是否为「免登录可评论」的博客文章，命中入资源库。
+2. **分析**：对收集到的外链逐条访问页面，**纯规则判定**（不经 AI）：要求登录 → 跳过；无评论表单 → 不入库；有评论表单 → 命中入资源库（有验证码标记为 captcha）。来源类型已由收集阶段的 Semrush「博客」标签保证。
 3. **发布**：创建任务绑定资源 + 目标网址，自动逐条打开页面 → AI 识别评论表单字段 → AI 生成评论 → 自动填表；半自动模式弹出「Comment Ready」浮层由人工点 Submit / Skip，全自动模式直接提交。
 
 原始设计依据在 `docs/插件界面描述.md`（UI 复刻参考文档）。
@@ -27,7 +27,7 @@ extension/
 ├── manifest.json            # MV3 清单
 ├── background/
 │   ├── service-worker.js    # 消息路由（switch on msg.type）、状态快照广播、alarms 保活、断点续跑
-│   ├── collect.js           # CollectController：DOM 抓取外链 → 翻页 → 「开始分析」逐条访问 + AI 分类入库
+│   ├── collect.js           # CollectController：DOM 抓取外链 → 翻页 → 「开始分析」逐条访问 + 规则判定入库（不经 AI）
 │   └── publish.js           # PublishRunner：任务逐条执行 → 表单识别 → 评论生成 → 填表 → 人工确认
 ├── content/                 # 由 background 用 scripting 注入，不走 manifest content_scripts
 │   ├── analyzer.js          # window.__BCM_ANALYZE__：采集标题/正文/评论表单/评论区信息

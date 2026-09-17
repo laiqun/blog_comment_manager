@@ -3,7 +3,7 @@
  * 1. 复用用户提前打开的 sem.3ue.co 共享工具页（dash.3ue.co 面板「打开」所得），直达反向链接报告页
  * 2. 直接从页面表格 DOM 抓取外链行（a[data-test-source-url]），只保留带「博客」标签的来源
  * 3. 抓完一页随机等 3-9s → 点击页面上的「下一页」按钮 → 等表格刷新 → 依次抓完全部页
- * 4. 「开始分析」单独触发：数据集逐条访问 → 分析器采集 → AI 分类 → 命中入库
+ * 4. 「开始分析」单独触发：数据集逐条访问 → 分析器采集 → 规则判定（登录/表单/验证码）→ 命中入库
  * 5. 评论区提取评论者网站作为滚雪球种子
  */
 import { getState, save, addLog, addResource, updateResourceByUrl } from '../lib/storage.js';
