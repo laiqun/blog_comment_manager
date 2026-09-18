@@ -34,6 +34,11 @@
           <span style="margin:0 4px">–</span>
           <input type="number" id="page-delay-max" min="1" max="60" style="width:64px" />
         </div>
+        <div class="input-row" style="margin-top:8px">
+          <label class="field-label" style="margin:0 8px 0 0" data-i18n="pageAsFilter">页面 AS ≥</label>
+          <input type="number" id="min-ascore" min="0" max="100" style="width:64px" />
+          <span class="hint" style="margin-left:8px;align-self:center" data-i18n="pageAsFilterHint">低于该值的来源页面不入库</span>
+        </div>
       </div>
 
       <div class="card status-card" id="collect-card">

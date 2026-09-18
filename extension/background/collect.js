@@ -299,13 +299,15 @@ export class CollectController {
     return (res && res.result) || [];
   }
 
-  /** 入库：去重 + 目标站/数据源/静态资源排除 + 只保留「博客」标签行；唯一持久层为 IndexedDB */
+  /** 入库：去重 + 目标站/数据源/静态资源排除 + 只保留「博客」标签行 + 页面 AS 下限筛选；唯一持久层为 IndexedDB */
   onScrapedRows(rows, page) {
     const cs = this.cs;
     const prov = PROVIDERS[cs.provider];
     const seen = new Set(cs.seen);
+    const minAs = this.minAscore();
     const idbRows = [];
     let kept = 0;
+    let lowAs = 0;
     for (const r of rows || []) {
       let u;
       try { u = new URL(r.url); } catch { continue; }
@@ -315,6 +317,12 @@ export class CollectController {
       if (prov.excludeHosts.some((h) => hostMatches(host, h))) continue; // 排除数据源站
       if (/\.(jpg|jpeg|png|gif|webp|svg|css|js|ico|woff2?|ttf|pdf)(\?|$)/i.test(u.pathname)) continue;
       if (!/博客|blog/i.test(r.platform || '')) continue; // 表格「博客」标签（中文=博客，英文=Blog）
+      // 页面 AS 下限：能解析出数值且低于阈值的丢弃（解析不到数值的不过滤，避免列缺失时全军覆没）
+      const asText = String(r.ascore || '').trim();
+      if (asText !== '') {
+        const asNum = Number(asText.replace(/[^\d.]/g, ''));
+        if (asNum < minAs) { lowAs++; continue; }
+      }
       const norm = u.origin + u.pathname + u.search;
       if (seen.has(norm)) continue;
       if (cs.seen.length >= LIMITS.maxQueue) break;
@@ -341,6 +349,7 @@ export class CollectController {
     }
     cs.discovered = cs.seen.length;
     cs.queued += kept; // 新入档的外链尚未分析，队列中同步增长（口径：backlinks − analysis）
+    if (lowAs > 0) addLog('collect', `第 ${page} 页有 ${lowAs} 条页面 AS 低于 ${minAs} 被过滤`, 'info');
     if (idbRows.length) {
       idbPutAll('backlinks', idbRows).catch((e) =>
         addLog('collect', `IndexedDB 写入失败：${e.message}`, 'warn'));
@@ -355,6 +364,12 @@ export class CollectController {
     let max = Math.min(Math.max(Number(s.pageDelayMaxMs) || 9000, 1000), 60000);
     if (min > max) [min, max] = [max, min];
     return { pageDelayMinMs: min, pageDelayMaxMs: max };
+  }
+
+  /** 页面 AS 下限（收集筛选），读取设置并收敛到 0-100 */
+  minAscore() {
+    const s = getState().settings;
+    return Math.min(Math.max(Number(s.minAscore) || 0, 0), 100);
   }
 
   async waitForRows(tabId, timeoutMs) {

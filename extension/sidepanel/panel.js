@@ -89,6 +89,11 @@ function renderCollect() {
   if (document.activeElement !== dMin) dMin.value = Math.round((s.pageDelayMinMs ?? 3000) / 1000);
   if (document.activeElement !== dMax) dMax.value = Math.round((s.pageDelayMaxMs ?? 9000) / 1000);
 
+  // 页面 AS 下限筛选：仅在非聚焦时回填，收集运行中锁定
+  const asEl = $('#min-ascore');
+  asEl.disabled = busy;
+  if (document.activeElement !== asEl) asEl.value = s.minAscore ?? 25;
+
   const btn = $('#btn-collect');
   btn.textContent = collectRunning ? t('stopCollect') : t('startCollect');
   btn.classList.toggle('btn-danger', collectRunning);
@@ -546,6 +551,14 @@ function bindEvents() {
   };
   $('#page-delay-min').addEventListener('change', savePageDelay);
   $('#page-delay-max').addEventListener('change', savePageDelay);
+
+  // 页面 AS 下限保存（后台收敛到 0-100）
+  $('#min-ascore').addEventListener('change', () => {
+    const v = parseInt($('#min-ascore').value, 10);
+    if (!Number.isFinite(v)) return;
+    send({ type: 'setSettings', patch: { minAscore: v } }).catch(() => {});
+    toast(t('saved'), 'success');
+  });
 
   // 日志
   $('#btn-clear-logs').addEventListener('click', () => act({ type: 'clearLogs' }));

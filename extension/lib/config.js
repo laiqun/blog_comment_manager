@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS = {
   aiTimeoutMs: 20000,      // AI 单次请求超时（毫秒）：超时主动中止，避免请求挂死把流程卡死
   pageDelayMinMs: 3000,    // 收集翻页最小间隔（可在收集 Tab 配置）
   pageDelayMaxMs: 9000,    // 收集翻页最大间隔（实际取区间内随机值）
+  minAscore: 25,           // 收集筛选：页面 AS 低于该值的行不入库（收集 Tab 可配置）
   logEnabled: true,        // 日志开关：关闭时 addLog 直接丢弃日志
 };
 

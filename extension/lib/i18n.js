@@ -26,6 +26,8 @@ export const MESSAGES = {
   targetDomainPh: { zh: '输入同行站点域名，如 sprunki-game.io', en: "Competitor domain, e.g. sprunki-game.io" },
   dataSource: { zh: '数据来源', en: 'Data Source' },
   pageDelay: { zh: '翻页间隔(秒)', en: 'Page Delay (s)' },
+  pageAsFilter: { zh: '页面 AS ≥', en: 'Page AS ≥' },
+  pageAsFilterHint: { zh: '低于该值的来源页面不入库', en: 'Sources below this score are skipped' },
   startCollect: { zh: '开始收集', en: 'Start Collecting' },
   stopCollect: { zh: '停止收集', en: 'Stop Collecting' },
   startAnalysis: { zh: '开始分析', en: 'Start Analysis' },

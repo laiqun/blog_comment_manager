@@ -101,6 +101,7 @@ async function snapshot() {
       hasKey: !!st.settings.openrouterKey,
       pageDelayMinMs: st.settings.pageDelayMinMs,
       pageDelayMaxMs: st.settings.pageDelayMaxMs,
+      minAscore: st.settings.minAscore,
       logEnabled: st.settings.logEnabled !== false,
       aiTimeoutMs: st.settings.aiTimeoutMs, // 助手页步骤按钮看门狗用（aiTimeoutMs * 3 + 30000）
     },
@@ -360,6 +361,10 @@ async function handleMessage(msg, sender) {
         if (min > max) [min, max] = [max, min];
         st.settings.pageDelayMinMs = min;
         st.settings.pageDelayMaxMs = max;
+      }
+      // 收集筛选：页面 AS 下限，收敛到 0-100
+      if (patch.minAscore != null) {
+        st.settings.minAscore = Math.round(Math.min(Math.max(Number(patch.minAscore) || 0, 0), 100));
       }
       // AI 单次请求超时（毫秒），收敛到 5s-300s
       if (patch.aiTimeoutMs != null) {
