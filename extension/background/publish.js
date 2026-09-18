@@ -16,6 +16,7 @@
 import { getState, addLog } from '../lib/storage.js';
 import { PUBLISH_SELECTORS } from '../lib/config.js';
 import { idbGet, idbPut, idbGetAll } from '../lib/idb.js';
+import { fmtDateTime } from '../lib/util.js';
 import { detectForm, generateComment, generateIdentity, summarizeArticle, translateComment } from '../lib/openrouter.js';
 
 /** AI 表单识别失败时的兜底选择器（WordPress 默认评论表单） */
@@ -121,7 +122,7 @@ export class PublishAssistant {
   /** 发布成功：记入 published 表（已发过的外链，按 [url, targetUrl] 去重） */
   async markPublished(url, targetUrl, taskName) {
     try {
-      await idbPut('published', { url, targetUrl, taskName: taskName || '', publishedAt: Date.now() });
+      await idbPut('published', { url, targetUrl, taskName: taskName || '', publishedAt: fmtDateTime() });
     } catch (e) {
       addLog('publish', `published 表写入失败：${e.message}`, 'warn', url);
     }
@@ -181,7 +182,8 @@ export class PublishAssistant {
   }
 
   /** 在表单所在框架里执行填表/提交/高亮（表单可能在 iframe 中） */
-  async frameCall(tabId, frameId, fn, arg) {
+  async frameCall(tabId, frameId, fn, arg = null) {
+    // args 必须可序列化：submit 这类无参调用不能传 undefined（会抛 Value is unserializable）
     const [res] = await chrome.scripting.executeScript({
       target: { tabId, frameIds: [frameId || 0] },
       func: (f, a) => window.__BCM_PUB__ && window.__BCM_PUB__[f] && window.__BCM_PUB__[f](a),
@@ -341,7 +343,16 @@ export class PublishAssistant {
   async onDecision(decision) {
     const tab = await this.activeTab();
     const rt = getState().publishRuntime;
-    if (!tab || !rt || rt.resourceUrl !== tab.url || rt.stage !== 'awaiting_review') return { ok: false };
+    // 守卫拒绝必须给出具体原因并记日志：此前静默 {ok:false}，面板只能显示笼统的「超时/无响应」
+    if (!tab || !rt || rt.resourceUrl !== tab.url || rt.stage !== 'awaiting_review') {
+      const reason = !tab ? '当前标签页不是可操作的网页'
+        : !rt ? '没有绑定的助手会话，请先执行「自动填写表单」'
+        : rt.resourceUrl !== tab.url ? `当前标签页与绑定页面不一致（页面可能被重载/跳转，原绑定：${rt.resourceUrl}），请重新执行「自动填写表单」`
+        : `当前不在待确认阶段（stage=${rt.stage}），请先执行「自动填写表单」`;
+      addLog('publish', `Submit/Skip 被拒绝：${reason}`, 'warn', (tab && tab.url) || (rt && rt.resourceUrl) || '');
+      await this.notify(['logs']);
+      return { ok: false, error: reason };
+    }
     const cfg = this.taskConfig();
 
     if (decision === 'submit') {

@@ -128,7 +128,7 @@ function isIdle() {
 /**
  * 空闲时把收集统计刷新为 IndexedDB 存量口径（跨轮次累积）：
  * 已发现 = backlinks 表条数；已分析 = analysis 表条数；
- * 队列中 = backlinks 里未分析过的；博客评论资源 = analysis 中命中结论（ready/captcha）条数。
+ * 队列中 = backlinks 里未分析过的；博客评论资源 = analysis 中 ready 条数（captcha 不计）。
  */
 const VALID_STATUSES = ['ready', 'captcha'];
 // Chrome 在插件重载后会两次创建 side panel 文档（恢复 + 附着），每次都会发 getSnapshot；
@@ -171,7 +171,7 @@ async function refreshCollectStatsFromIdb() {
       discovered: links.length,
       analyzed: analysis.length,
       queued: links.filter((r) => !analyzedUrls.has(r.url)).length,
-      matched: analysis.filter((r) => VALID_STATUSES.includes(r.status)).length,
+      matched: analysis.filter((r) => r.status === 'ready').length,
       seen: links.map((r) => r.url),
     };
     addLog('collect', `统计刷新（${c.targetDomain}）：已发现=${next.discovered} / 已分析=${next.analyzed} / 队列中=${next.queued} / 博客评论资源=${next.matched}`, 'info');

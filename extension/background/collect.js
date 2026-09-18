@@ -17,6 +17,37 @@ export class CollectController {
     this.busy = false;    // 分析循环是否在跑（仅内存态，SW 重启后由 alarm resume）
     this.scraping = false;// 抓页循环是否在跑
     this.providerDone = false;
+    this.roundBase = null; // 本轮分析起始的累积基线（仅用于结束日志里的本轮增量）
+  }
+
+  /**
+   * 统计累积基线：与空闲时 refreshCollectStatsFromIdb 完全同口径——
+   * 已发现=backlinks 条数；已分析=analysis 条数；博客评论资源=analysis 中 ready 条数（captcha 不计）；
+   * 队列中=backlinks 里未分析过的。运行中的计数都以此基线起算、在其上累加，不清零。
+   */
+  async statsBaseline(domain) {
+    const links = await idbGetDomain('backlinks', domain).catch(() => []);
+    const rows = await idbGetDomain('analysis', domain).catch(() => []);
+    const analyzedUrls = new Set(rows.map((r) => r.url));
+    return {
+      links,
+      rows,
+      discovered: links.length,
+      analyzed: rows.length,
+      matched: rows.filter((r) => r.status === 'ready').length,
+      queued: links.filter((r) => !analyzedUrls.has(r.url)).length,
+    };
+  }
+
+  /** 把四项统计对账为 IndexedDB 当前口径（读取失败则不动，保持原值） */
+  async syncStatsFromIdb() {
+    const base = await this.statsBaseline(this.cs.targetDomain).catch(() => null);
+    if (!base) return;
+    const cs = this.cs;
+    cs.discovered = base.discovered;
+    cs.analyzed = base.analyzed;
+    cs.matched = base.matched;
+    cs.queued = base.queued;
   }
 
   get cs() {
@@ -39,12 +70,13 @@ export class CollectController {
       providerTabId: null, analyzeTabId: null,
       startedAt: Date.now(),
     });
-    // 已发现外链为累积口径：从 IndexedDB 恢复该域名下的存量（seen 也据此去重，重复抓取不重复计数）
-    try {
-      const prev = await idbGetDomain('backlinks', cs.targetDomain);
-      cs.seen = prev.map((r) => r.url);
-      cs.discovered = cs.seen.length;
-    } catch { /* IndexedDB 不可用时从 0 开始 */ }
+    // 四项统计均为跨轮次累积口径：从 IndexedDB 存量基线起算（与空闲时统计刷新一致，本轮不清零）
+    const base = await this.statsBaseline(cs.targetDomain);
+    cs.seen = base.links.map((r) => r.url); // seen 据此去重，重复抓取不重复计数
+    cs.discovered = base.discovered;
+    cs.analyzed = base.analyzed;
+    cs.matched = base.matched;
+    cs.queued = base.queued;
     this.providerDone = false;
     addLog('collect', `开始收集：${PROVIDERS[cs.provider].label} / ${domain}（从页面抓取，仅保留「博客」外链）`, 'info');
     await this.notify(['collectState', 'logs']);
@@ -308,6 +340,7 @@ export class CollectController {
       kept++;
     }
     cs.discovered = cs.seen.length;
+    cs.queued += kept; // 新入档的外链尚未分析，队列中同步增长（口径：backlinks − analysis）
     if (idbRows.length) {
       idbPutAll('backlinks', idbRows).catch((e) =>
         addLog('collect', `IndexedDB 写入失败：${e.message}`, 'warn'));
@@ -374,25 +407,25 @@ export class CollectController {
   async startAnalysis() {
     const cs = this.cs;
     if (cs.status === 'running') throw new Error('收集/分析进行中');
-    // 数据只以 IndexedDB 为准（按目标域名累积，跨收集轮次）
-    const rows = await idbGetDomain('backlinks', cs.targetDomain).catch(() => []);
-    if (!rows.length) throw new Error('收集数据集为空：请先「开始收集」抓取外链数据');
+    // 数据只以 IndexedDB 为准（按目标域名累积，跨收集轮次）；统计也从同一基线起算，本轮不清零
+    const base = await this.statsBaseline(cs.targetDomain);
+    if (!base.links.length) throw new Error('收集数据集为空：请先「开始收集」抓取外链数据');
     // 去重：已分析过的 URL（无论结论）不再重复分析
-    const analyzedUrls = new Set(
-      (await idbGetDomain('analysis', cs.targetDomain).catch(() => [])).map((r) => r.url),
-    );
-    const pending = rows.filter((r) => !analyzedUrls.has(r.url));
+    const analyzedUrls = new Set(base.rows.map((r) => r.url));
+    const pending = base.links.filter((r) => !analyzedUrls.has(r.url));
     Object.assign(cs, {
       status: 'running',
       mode: 'analyze',
       phase: 'phaseAnalyzing',
-      analyzed: 0, matched: 0,
+      discovered: base.discovered,
+      analyzed: base.analyzed, matched: base.matched,
       queue: pending.map((r) => r.url),
       analyzeTabId: null,
       startedAt: Date.now(),
     });
+    this.roundBase = { analyzed: base.analyzed, matched: base.matched };
     cs.queued = cs.queue.length;
-    addLog('collect', `开始分析：数据集共 ${rows.length} 条，已分析过跳过 ${rows.length - pending.length} 条，本次待分析 ${pending.length} 条`, 'info');
+    addLog('collect', `开始分析：数据集共 ${base.links.length} 条，已分析过跳过 ${base.links.length - pending.length} 条，本次待分析 ${pending.length} 条`, 'info');
     await this.notify(['collectState', 'logs']);
     if (pending.length) this.loop();
     else this.finish('analysisDone');
@@ -421,7 +454,9 @@ export class CollectController {
         } catch (e) {
           addLog('collect', `分析失败：${e.message}`, 'error', url);
         }
-        cs.analyzed += 1;
+        // 每处理完一条从 IndexedDB 重新对账四项统计：显示值恒等于表口径，
+        // 不依赖增量计数（IDB 写失败/异常路径/SW 回收都不会造成漂移）
+        await this.syncStatsFromIdb();
         await this.notify(['collectState', 'logs']);
         await sleep(getState().settings.analyzeDelayMs);
       }
@@ -472,7 +507,7 @@ export class CollectController {
         addLog('collect', '未找到评论表单，不匹配', 'info', url);
         return;
       }
-      cs.matched += 1;
+      // matched 不在运行中增量累加：由 loop 每条的 syncStatsFromIdb 对账得出
       await this.recordAnalysis(cs.targetDomain, url, data.hasCaptcha ? 'captcha' : 'ready',
         data.hasCaptcha ? '命中，有验证码' : '命中，可发布');
       addLog('collect', `命中博客评论资源（评论表单=有${data.hasCaptcha ? '，验证码=有' : ''}）`, 'success', url);
@@ -515,12 +550,18 @@ export class CollectController {
     if (!this.busy && !this.scraping) this.finish('stopCollect');
   }
 
-  finish(phaseKey) {
+  async finish(phaseKey) {
     const cs = this.cs;
     cs.status = 'idle';
     cs.phase = phaseKey || '';
-    cs.queued = cs.queue.length;
-    addLog('collect', `收集结束：发现 ${cs.discovered} / 分析 ${cs.analyzed} / 命中 ${cs.matched}`, 'success');
+    // 收尾时再对账一次四项统计，保证结束态显示与 IndexedDB 表口径一致
+    await this.syncStatsFromIdb().catch(() => {});
+    let round = '';
+    if (this.roundBase) {
+      round = `（本轮分析 ${cs.analyzed - this.roundBase.analyzed} / 命中 ${cs.matched - this.roundBase.matched}）`;
+      this.roundBase = null;
+    }
+    addLog('collect', `收集结束：发现 ${cs.discovered} / 分析 ${cs.analyzed} / 命中 ${cs.matched}${round}`, 'success');
     this.notify(['collectState', 'logs']).catch(() => {});
   }
 

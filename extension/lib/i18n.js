@@ -144,6 +144,7 @@ export const MESSAGES = {
   asstReady: { zh: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。', en: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.' },
   asstManual: { zh: '操作对象是当前激活的标签页。「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」互不依赖，可任意顺序执行；评论不满意可再点一次重新生成，满意后点「自动填写表单」。', en: 'Steps act on the active tab. "Get title & summary", "AI generate comment" and "AI detect form" are independent — run them in any order. Not happy with the comment? Click again for a new one, then "Auto fill form".' },
   asstLocate: { zh: '定位目标链接', en: 'Locate target link' },
+  asstLocateFrom: { zh: '定位目标链接（来自 {domain}）', en: 'Locate target link (from {domain})' },
   asstLocating: { zh: '正在定位…', en: 'Locating…' },
   asstNoTarget: { zh: '未找到该资源对应的收集目标域名', en: 'No collect target domain found for this resource' },
   asstNoLink: { zh: '页面中未找到指向目标域名的链接', en: 'No link pointing to the target domain was found on this page' },

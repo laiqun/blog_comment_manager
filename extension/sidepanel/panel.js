@@ -266,6 +266,10 @@ function renderAssistant() {
   // 当前资源 = 当前激活标签页
   $('#asst-url').textContent = activeTabUrl || t('asstNoPage');
   $('#asst-url').title = activeTabUrl;
+  // 「定位目标链接」按钮上标注资源来自哪个同行站点（绑定会话的 refDomain）
+  const from = bound ? (pub.refDomain || '') : '';
+  $('#asst-locate').textContent = from ? t('asstLocateFrom', { domain: from }) : t('asstLocate');
+  $('#asst-locate').title = from;
 
   // 状态行：优先绑定会话的 uiStatus（key 走 i18n，text 直显），无则给默认引导
   let status = '';
@@ -389,9 +393,11 @@ async function runLocate() {
 }
 
 async function decide(decision) {
+  await refreshActiveTab(); // 先对齐激活标签页 URL，避免面板持有过期绑定状态
   try {
     const res = await send({ type: 'pub:decision', decision });
-    if (res && res.ok === false) toast(t('asstStepNoResp'), 'error');
+    // 后台返回的具体原因优先展示（守卫拒绝会带 error），无原因才退回笼统提示
+    if (res && res.ok === false) toast(res.error || t('asstStepNoResp'), 'error');
   } catch (e) {
     toast(e.message, 'error');
   }

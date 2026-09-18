@@ -24,6 +24,13 @@ export function fmtDate(ts) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
+/** 本地日期时间字符串（如 2026-09-18 14:03:22），默认取当前时间 */
+export function fmtDateTime(ts = Date.now()) {
+  const d = new Date(ts);
+  const p = (x) => String(x).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
 /** 等待某个 tab 完成 loaded 状态，超时返回 false */
 export function waitTabComplete(tabId, timeoutMs = 30000) {
   return new Promise((resolve) => {
