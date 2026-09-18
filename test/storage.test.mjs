@@ -77,3 +77,17 @@ test('domainOf 去掉 www', () => {
   assert.equal(domainOf('https://www.ab.com/x?y=1'), 'ab.com');
   assert.equal(domainOf('not a url'), '');
 });
+
+test('save 兼容数组传参：多 key 数组不再被 coercion 成 "a,b" 垃圾键', async () => {
+  getState().collectState.status = 'running';
+  getState().logs = [{ t: 2, src: 'collect', msg: 'arr-call' }];
+  await save(['collectState', 'logs']); // 控制器经 notify 的调用形式
+  const stored = mem.get('bcm_store');
+  assert.equal(stored.collectState.status, 'running');
+  assert.ok(stored.logs.some((l) => l.msg === 'arr-call'));
+  assert.equal(Object.keys(stored).some((k) => k.includes(',')), false);
+  // 已有的垃圾键会被合并写入时剔除
+  mem.set('bcm_store', { ...mem.get('bcm_store'), 'collectState,logs': { junk: true } });
+  await save('logs');
+  assert.equal(mem.get('bcm_store')['collectState,logs'], undefined);
+});

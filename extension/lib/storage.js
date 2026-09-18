@@ -94,14 +94,21 @@ async function migrateBacklinksToIdb(saved) {
 
 export async function save(...keys) {
   const all = ['settings', 'collectState', 'assistantTask', 'publishRuntime', 'logs'];
-  const list = keys && keys.length ? keys : all;
+  // 兼容 save(['a','b']) 数组传参：展平后再筛合法 key（多元素数组会被对象键 coercion 成 "a,b" 垃圾键）
+  const flat = keys.flat().filter((k) => all.includes(k));
+  const list = flat.length ? flat : all;
   const payload = {};
   for (const k of list) {
     payload[k] = state[k];
   }
-  // 合并写入：chrome.storage 的 set 是整个 key 覆盖，直接写 payload 会把未保存的其它字段抹掉
+  // 合并写入：chrome.storage 的 set 是整个 key 覆盖，直接写 payload 会把未保存的其它字段抹掉；
+  // 顺带丢弃历史版本数组传参 bug 留下的 "a,b" 形垃圾键
   const data = await chrome.storage.local.get(STORAGE_KEY);
-  await chrome.storage.local.set({ [STORAGE_KEY]: { ...(data[STORAGE_KEY] || {}), ...payload } });
+  const prev = {};
+  for (const [k, v] of Object.entries(data[STORAGE_KEY] || {})) {
+    if (!k.includes(',')) prev[k] = v; // 剔掉历史数组传参 bug 留下的 "a,b" 形垃圾键
+  }
+  await chrome.storage.local.set({ [STORAGE_KEY]: { ...prev, ...payload } });
 }
 
 export async function clearAll() {

@@ -20,7 +20,8 @@ chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((e) =>
 let collect, publish;
 
 function ensureControllers() {
-  const notify = async (...keys) => {
+  // 控制器统一以 notify(['a','b']) 数组形式传 key；此处展开后交给 save
+  const notify = async (keys = []) => {
     await save(...keys);
     broadcast();
   };
