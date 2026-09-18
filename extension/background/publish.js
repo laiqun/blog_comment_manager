@@ -6,7 +6,8 @@
  *   步骤：获取标题与摘要 / AI 识别表单 / AI 生成评论 互不依赖、可任意顺序、可反复触发
  *   （同一步骤的并发触发由 stepBusy 去重）；「自动填写表单」需评论已生成，
  *   填表成功后进入 awaiting_review 等人工 Submit / Skip（此阶段步骤仍可重跑并覆盖重填）。
- *   Submit 成功写 published 表（按 [url, targetUrl] 防重复）；Skip 仅清理页面标记。
+ *   Submit 成功写 published 表（按 [url, targetUrl] 防重复），随后面板可给该记录补备注
+ *   （saveNote 写 comment 字段）；Skip 仅清理页面标记；「标记为无效资源」停用 analysis 记录。
  *   「换一个」：把当前激活标签页导航到资源库中未发布过的下一条资源（ready 优先于 captcha）。
  *   助手页所需数据（状态文案/摘要/评论/译文/昵称/邮箱）全部落在 publishRuntime
  *   （rt.uiStatus / rt.manual），经快照广播给面板渲染；页面脚本只做无 UI 操作。
@@ -15,7 +16,7 @@
  */
 import { getState, addLog } from '../lib/storage.js';
 import { PUBLISH_SELECTORS } from '../lib/config.js';
-import { idbGet, idbPut, idbGetAll } from '../lib/idb.js';
+import { idbGet, idbPut, idbPutAll, idbGetAll } from '../lib/idb.js';
 import { fmtDateTime } from '../lib/util.js';
 import { detectForm, generateComment, generateIdentity, summarizeArticle, translateComment } from '../lib/openrouter.js';
 
@@ -354,6 +355,7 @@ export class PublishAssistant {
       return { ok: false, error: reason };
     }
     const cfg = this.taskConfig();
+    let submitted = false; // 提交成功标记：面板据此显示「备注」输入行
 
     if (decision === 'submit') {
       try {
@@ -362,6 +364,7 @@ export class PublishAssistant {
         // 提交在表单所在框架执行（iframe 里的表单在对应框架提交）
         const s = await this.frameCall(tab.id, (rt.manual && rt.manual.frameId) || 0, 'submit');
         if (s && s.ok) {
+          submitted = true;
           await this.markPublished(rt.resourceUrl, cfg.targetUrl, cfg.name);
           addLog('publish', '✓ 人工确认，已提交', 'success', rt.resourceUrl);
           rt.uiStatus = { key: 'asstSubmitted' };
@@ -393,7 +396,54 @@ export class PublishAssistant {
     // 停在当前页面，退回步骤阶段：可继续操作本页，或点「换一个」去下一条未发布资源
     rt.stage = 'awaiting_steps';
     await this.notify(['publishRuntime', 'logs']);
-    return { ok: true };
+    return { ok: true, submitted };
+  }
+
+  /** 助手页「标记为无效资源」：把 analysis 表中该 url 的记录全部停用（enabled=false，数据保留） */
+  async markInvalid() {
+    const tab = await this.activeTab();
+    const rt = getState().publishRuntime;
+    if (!tab || !rt || rt.resourceUrl !== tab.url) {
+      return { ok: false, error: '请在绑定的资源页面上操作（当前标签页与会话不一致）' };
+    }
+    try {
+      const rows = await idbGetAll('analysis');
+      const dirty = rows
+        .filter((r) => r && r.url === rt.resourceUrl && r.enabled !== false)
+        .map((r) => ({ ...r, enabled: false }));
+      if (!dirty.length) return { ok: false, error: 'analysis 表中没有该页面的资源记录（或已停用）' };
+      await idbPutAll('analysis', dirty);
+      addLog('publish', `已标记为无效资源（enabled=false，共 ${dirty.length} 条）`, 'info', rt.resourceUrl);
+      rt.uiStatus = { key: 'asstInvalidMarked' };
+      await this.notify(['publishRuntime', 'logs']);
+      return { ok: true };
+    } catch (e) {
+      addLog('publish', `标记无效资源失败：${e.message}`, 'error', rt.resourceUrl);
+      return { ok: false, error: e.message };
+    }
+  }
+
+  /** 助手页「备注」：给 published 表中该页面的已发布记录写入 comment 字段（Submit 成功后可用） */
+  async saveNote(comment) {
+    const tab = await this.activeTab();
+    const rt = getState().publishRuntime;
+    if (!tab || !rt || rt.resourceUrl !== tab.url) {
+      return { ok: false, error: '请在绑定的资源页面上操作（当前标签页与会话不一致）' };
+    }
+    const cfg = this.taskConfig();
+    try {
+      const row = await idbGet('published', [rt.resourceUrl, cfg.targetUrl]);
+      if (!row) return { ok: false, error: 'published 表中没有该页面的记录（须先 Submit 成功）' };
+      const text = String(comment || '').trim();
+      if (!text) return { ok: false, error: '备注内容为空' };
+      await idbPut('published', { ...row, comment: text });
+      addLog('publish', '已发布记录备注已保存', 'info', rt.resourceUrl);
+      await this.notify(['logs']);
+      return { ok: true };
+    } catch (e) {
+      addLog('publish', `备注保存失败：${e.message}`, 'error', rt.resourceUrl);
+      return { ok: false, error: e.message };
+    }
   }
 
   /**

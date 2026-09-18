@@ -392,6 +392,16 @@ async function handleMessage(msg, sender) {
       return await publish.onDecision(msg.decision);
     }
 
+    case 'pub:markInvalid': {
+      // 助手页「标记为无效资源」：analysis 表该 url 的记录 enabled=false（数据保留）
+      return await publish.markInvalid();
+    }
+
+    case 'pub:note': {
+      // 助手页「备注」：给 published 表中该页面的已发布记录写入 comment 字段
+      return await publish.saveNote(msg.comment);
+    }
+
     case 'pub:step': {
       // 助手页的步骤按钮：获取标题与摘要 / 识别表单 / 生成评论 / 填写表单（对当前激活标签页）
       return await publish.onStep(msg.step);

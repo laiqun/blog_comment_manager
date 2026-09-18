@@ -221,6 +221,7 @@ let asstWatchdog = 0;       // 步骤按钮看门狗计时器
 let asstTemplates = [];     // 模板缓存（IndexedDB templates 表）
 let asstTaskCollapsed = true;  // 「当前任务」详情折叠状态（默认收起，模板选择行不受影响）
 let asstTaskTouched = false;   // 用户手动折叠过则不再自动展开
+let asstNoteFor = '';          // Submit 成功的资源 url：绑定期间显示「备注」输入行
 
 function activateTab(name) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -341,6 +342,13 @@ function renderAssistant() {
   const review = stage === 'awaiting_review';
   $('#asst-submit').disabled = !review;
   $('#asst-skip').disabled = !review;
+  // 「标记为无效资源」：绑定会话即可用（不需要 awaiting_review）
+  $('#asst-disable').disabled = !bound;
+  // 「备注」输入行：Submit 成功后显示，绑定同一资源会话期间保留；输入值只在显示时给一次默认文案
+  const noteRow = $('#asst-note-row');
+  const showNote = !!(bound && pub.resourceUrl === asstNoteFor);
+  if (showNote && noteRow.hidden) $('#asst-note').value = t('asstNoteDefault');
+  noteRow.hidden = !showNote;
   // 填表完成进入待确认时自动切到助手 Tab（后台无法主动弹面板，缓解「看不到确认界面」）
   if (review && !asstLastReview) {
     const cur = document.querySelector('.tab.active');
@@ -403,6 +411,37 @@ async function decide(decision) {
     const res = await send({ type: 'pub:decision', decision });
     // 后台返回的具体原因优先展示（守卫拒绝会带 error），无原因才退回笼统提示
     if (res && res.ok === false) toast(res.error || t('asstStepNoResp'), 'error');
+    // Submit 成功：显示备注输入行（默认「需要审核」），可给 published 记录补一条备注
+    if (res && res.ok && res.submitted) {
+      asstNoteFor = activeTabUrl;
+      const note = $('#asst-note');
+      if (note && !note.value) note.value = t('asstNoteDefault');
+      $('#asst-note-row').hidden = false;
+    }
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+}
+
+/** 「标记为无效资源」：analysis 表该 url 记录 enabled=false（数据保留，结果走状态行/日志） */
+async function markInvalid() {
+  const btn = $('#asst-disable');
+  btn.disabled = true;
+  try {
+    const res = await send({ type: 'pub:markInvalid' });
+    if (res && res.ok === false) toast(res.error || t('asstStepNoResp'), 'error');
+  } catch (e) {
+    toast(e.message, 'error');
+  }
+  btn.disabled = false;
+}
+
+/** 「备注」：把输入内容写入 published 表中该页面对应记录的 comment 字段 */
+async function saveNote() {
+  try {
+    const res = await send({ type: 'pub:note', comment: $('#asst-note').value });
+    if (res && res.ok === false) toast(res.error || t('asstStepNoResp'), 'error');
+    else toast(t('asstNoteSaved'));
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -491,6 +530,8 @@ function bindEvents() {
   $('#asst-next').addEventListener('click', pickNext);
   $('#asst-submit').addEventListener('click', () => decide('submit'));
   $('#asst-skip').addEventListener('click', () => decide('skip'));
+  $('#asst-disable').addEventListener('click', markInvalid);
+  $('#asst-note-save').addEventListener('click', saveNote);
 
   // 助手页「当前任务」：折叠/展开任务详情
   $('#asst-task-toggle').addEventListener('click', () => {
