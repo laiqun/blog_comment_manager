@@ -22,7 +22,7 @@ export class CollectController {
 
   /**
    * 统计累积基线：与空闲时 refreshCollectStatsFromIdb 完全同口径——
-   * 已发现=backlinks 条数；已分析=analysis 条数；博客评论资源=analysis 中 ready 条数（captcha 不计）；
+   * 已发现=backlinks 条数；已分析=analysis 条数；博客评论资源=analysis 中命中条数（ready/captcha，与资源库筛选一致）；
    * 队列中=backlinks 里未分析过的。运行中的计数都以此基线起算、在其上累加，不清零。
    */
   async statsBaseline(domain) {
@@ -34,7 +34,7 @@ export class CollectController {
       rows,
       discovered: links.length,
       analyzed: rows.length,
-      matched: rows.filter((r) => r.status === 'ready').length,
+      matched: rows.filter((r) => r.status === 'ready' || r.status === 'captcha').length,
       queued: links.filter((r) => !analyzedUrls.has(r.url)).length,
     };
   }

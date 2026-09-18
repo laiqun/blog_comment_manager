@@ -1,7 +1,7 @@
 /**
  * service-worker 集成测试：getSnapshot 时从 IndexedDB 刷新收集统计。
  * 口径：已发现=backlinks 表条数；已分析=analysis 表条数；
- *      队列中=backlinks 未分析的；博客评论资源=analysis 中 ready 条数（captcha 不计）。
+ *      队列中=backlinks 未分析的；博客评论资源=analysis 中 ready/captcha 条数（与资源库筛选一致）。
  * 打内存版 chrome.* / indexedDB 最小桩，不启动浏览器。
  */
 import { test, before } from 'node:test';
@@ -70,7 +70,7 @@ test('getSnapshot：空闲时按 IndexedDB 口径刷新四个统计', async () =
   assert.equal(c.discovered, 5); // backlinks 表该域名条数
   assert.equal(c.analyzed, 3);   // analysis 表条数
   assert.equal(c.queued, 2);     // backlinks 未分析（5 - 3）
-  assert.equal(c.matched, 1);    // analysis 中仅 ready（captcha 不计）
+  assert.equal(c.matched, 2);    // analysis 中 ready/captcha（与资源库筛选一致）
 });
 
 test('getSnapshot：运行中不刷新，保持运行态计数', async () => {
@@ -91,7 +91,7 @@ test('getSnapshot：targetDomain 丢失时从 IndexedDB 恢复最近收集的域
   assert.equal(res.snapshot.collect.discovered, 5);
   assert.equal(res.snapshot.collect.analyzed, 3);
   assert.equal(res.snapshot.collect.queued, 2);
-  assert.equal(res.snapshot.collect.matched, 1);
+  assert.equal(res.snapshot.collect.matched, 2);
   assert.equal(cs.targetDomain, 'example.com'); // 已写回状态
 });
 
