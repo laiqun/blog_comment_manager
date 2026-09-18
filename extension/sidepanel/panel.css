@@ -355,12 +355,13 @@ input::placeholder { color: var(--text-faint); }
 .asst-field-pair { display: flex; gap: 8px; margin-bottom: 8px; }
 .asst-field-pair .asst-field { flex: 1; min-width: 0; margin-bottom: 0; }
 .asst-copy {
-  padding: 1px 8px;
+  padding: 1px 6px;
   border: 1px solid var(--blue-bright);
   border-radius: 6px;
   background: transparent;
   color: var(--blue-bright);
-  font-size: 11px;
+  font-size: 13px;
+  line-height: 1.2;
   cursor: pointer;
   flex-shrink: 0;
 }

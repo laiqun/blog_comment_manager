@@ -302,7 +302,7 @@ function renderAssistant() {
     const i = copies.push(val) - 1;
     return `
     <div class="asst-field">
-      <div class="asst-field-label"><span>${t(key)}</span>${side}<button class="asst-copy" data-idx="${i}">${t('copy')}</button></div>
+      <div class="asst-field-label"><span>${t(key)}</span>${side}<button class="asst-copy" title="${t('copy')}" aria-label="${t('copy')}" data-idx="${i}">⧉</button></div>
       <div class="asst-field-val">${esc(val)}</div>
     </div>`;
   };
@@ -327,8 +327,9 @@ function renderAssistant() {
       try {
         await navigator.clipboard.writeText(copies[Number(btn.dataset.idx)]);
         const old = btn.textContent;
-        btn.textContent = t('copied');
-        setTimeout(() => { btn.textContent = old; }, 1200);
+        btn.textContent = '✓';
+        btn.title = t('copied');
+        setTimeout(() => { btn.textContent = old; btn.title = t('copy'); }, 1200);
       } catch (e) {
         toast(e.message, 'error');
       }
