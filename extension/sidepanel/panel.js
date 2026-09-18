@@ -255,7 +255,9 @@ function renderAssistant() {
   // 「当前任务」详情折叠：未配置任务时强制展开引导填写；收起时标题行显示任务名摘要
   if (!asstTaskTouched && !at.name && !at.targetUrl) asstTaskCollapsed = false;
   $('#asst-task-body').hidden = asstTaskCollapsed;
-  $('#asst-task-toggle').textContent = t(asstTaskCollapsed ? 'asstExpand' : 'asstCollapse');
+  const toggleBtn = $('#asst-task-toggle');
+  toggleBtn.textContent = asstTaskCollapsed ? '▸' : '▾';
+  toggleBtn.title = t(asstTaskCollapsed ? 'asstExpand' : 'asstCollapse');
   const taskNameEl = $('#asst-task-name');
   taskNameEl.hidden = !asstTaskCollapsed;
   taskNameEl.textContent = at.name || at.targetUrl || '';

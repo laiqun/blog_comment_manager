@@ -199,6 +199,23 @@
     formMarked = null;
   }
 
+  /**
+   * 滚动到目标元素并居中。懒加载图片/广告会在 smooth 滚动途中把页面继续撑高，
+   * 导致停点偏上一截：滚动后再按几个时间点校正，偏出阈值就重新滚动。
+   * 对已在视口内的元素 scrollIntoView 是 no-op，所以重复触发也靠校正轨重新对准。
+   */
+  function scrollCenter(el) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    for (const delay of [400, 1000, 1800]) {
+      setTimeout(() => {
+        if (!el.isConnected) return;
+        const r = el.getBoundingClientRect();
+        const off = r.top + r.height / 2 - window.innerHeight / 2;
+        if (Math.abs(off) > 48) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, delay);
+    }
+  }
+
   /** 滚动到 AI 识别出的评论框（找不到退回整个表单）并加蓝色高亮 */
   function markForm(form) {
     try {
@@ -206,7 +223,7 @@
       const el = (f.comment && q(f.comment)) || (f.formSelector && q(f.formSelector));
       if (!el) return { ok: false, error: '页面上未找到识别出的表单元素' };
       unmarkForm();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrollCenter(el);
       const prev = {};
       for (const p of MARK_PROPS) prev[p] = el.style[p];
       formMarked = { el, prev };
@@ -236,7 +253,7 @@
       const el = links[i];
       // 清除上一个高亮，标记始终只框住当前定位到的链接
       unmark();
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      scrollCenter(el);
       const prev = {};
       for (const p of MARK_PROPS) prev[p] = el.style[p];
       lastMarked = { el, prev };

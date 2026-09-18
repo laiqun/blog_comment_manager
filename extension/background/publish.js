@@ -73,6 +73,9 @@ export class PublishAssistant {
     const cur = st.publishRuntime;
     if (cur && cur.resourceUrl === tab.url) {
       cur.tabId = tab.id; // SW 回收后 tabId 可能过期，每次操作前刷新
+      // 页面可能被站点整页重载过（如 WAF 浏览器校验通过后跳转），注入不存活于导航之后，
+      // 每次操作前重新注入（幂等守卫，成本很低）
+      await this.injectAll(tab.id).catch(() => {});
       return cur;
     }
     const rt = st.publishRuntime = {
@@ -343,6 +346,8 @@ export class PublishAssistant {
 
     if (decision === 'submit') {
       try {
+        // 页面可能在填表后被重载过（WAF 校验/站点跳转）：提交前确保注入还在
+        await this.injectAll(tab.id).catch(() => {});
         // 提交在表单所在框架执行（iframe 里的表单在对应框架提交）
         const s = await this.frameCall(tab.id, (rt.manual && rt.manual.frameId) || 0, 'submit');
         if (s && s.ok) {

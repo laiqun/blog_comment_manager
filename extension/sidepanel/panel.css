@@ -148,9 +148,19 @@ input::placeholder { color: var(--text-faint); }
 .tpl-row select { flex: 1; min-width: 0; }
 .tpl-row .btn { flex-shrink: 0; }
 
-/* 「当前任务」标题行（标签 + 折叠时任务名摘要 + 折叠按钮） */
-.asst-task-head { display: flex; align-items: center; gap: 8px; }
-.asst-task-head .btn { flex-shrink: 0; padding: 3px 10px; font-size: 12px; }
+/* 「当前任务」标题行（折叠图标 + 标签 + 折叠时任务名摘要） */
+.asst-task-head { display: flex; align-items: center; gap: 6px; }
+.asst-task-toggle {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 12px;
+  width: 18px;
+  padding: 0;
+  cursor: pointer;
+  line-height: 1;
+}
+.asst-task-toggle:hover { color: var(--text); }
 .asst-task-name {
   flex: 1;
   min-width: 0;
