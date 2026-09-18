@@ -433,7 +433,7 @@ export class PublishAssistant {
     const cfg = this.taskConfig();
     try {
       const row = await idbGet('published', [rt.resourceUrl, cfg.targetUrl]);
-      if (!row) return { ok: false, error: 'published 表中没有该页面的记录（须先 Submit 成功）' };
+      if (!row) return { ok: false, error: '该页面还没有已发布记录，请先 Submit 成功后再保存备注' };
       const text = String(comment || '').trim();
       if (!text) return { ok: false, error: '备注内容为空' };
       await idbPut('published', { ...row, comment: text });

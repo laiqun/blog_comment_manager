@@ -221,7 +221,7 @@ let asstWatchdog = 0;       // 步骤按钮看门狗计时器
 let asstTemplates = [];     // 模板缓存（IndexedDB templates 表）
 let asstTaskCollapsed = true;  // 「当前任务」详情折叠状态（默认收起，模板选择行不受影响）
 let asstTaskTouched = false;   // 用户手动折叠过则不再自动展开
-let asstNoteFor = '';          // Submit 成功的资源 url：绑定期间显示「备注」输入行
+let asstNoteUrl = '';          // 已填过默认备注文案的资源 url：切换绑定资源时把备注输入框重置回默认值
 
 function activateTab(name) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -345,11 +345,11 @@ function renderAssistant() {
   $('#asst-skip').disabled = !review;
   // 「标记为无效资源」：绑定会话即可用（不需要 awaiting_review）
   $('#asst-disable').disabled = !bound;
-  // 「备注」输入行：Submit 成功后显示，绑定同一资源会话期间保留；输入值只在显示时给一次默认文案
-  const noteRow = $('#asst-note-row');
-  const showNote = !!(bound && pub.resourceUrl === asstNoteFor);
-  if (showNote && noteRow.hidden) $('#asst-note').value = t('asstNoteDefault');
-  noteRow.hidden = !showNote;
+  // 「备注」输入行默认显示；切换绑定资源时重置一次默认文案（同一资源会话内保留用户输入）
+  if (bound && pub.resourceUrl !== asstNoteUrl) {
+    asstNoteUrl = pub.resourceUrl;
+    $('#asst-note').value = t('asstNoteDefault');
+  }
   // 填表完成进入待确认时自动切到助手 Tab（后台无法主动弹面板，缓解「看不到确认界面」）
   if (review && !asstLastReview) {
     const cur = document.querySelector('.tab.active');
@@ -412,12 +412,9 @@ async function decide(decision) {
     const res = await send({ type: 'pub:decision', decision });
     // 后台返回的具体原因优先展示（守卫拒绝会带 error），无原因才退回笼统提示
     if (res && res.ok === false) toast(res.error || t('asstStepNoResp'), 'error');
-    // Submit 成功：显示备注输入行（默认「需要审核」），可给 published 记录补一条备注
-    if (res && res.ok && res.submitted) {
-      asstNoteFor = activeTabUrl;
-      const note = $('#asst-note');
-      if (note && !note.value) note.value = t('asstNoteDefault');
-      $('#asst-note-row').hidden = false;
+    // Submit 成功：published 记录已生成，备注输入框为空则补一次默认文案（行本身默认显示，无需再切换）
+    if (res && res.ok && res.submitted && !$('#asst-note').value) {
+      $('#asst-note').value = t('asstNoteDefault');
     }
   } catch (e) {
     toast(e.message, 'error');

@@ -128,10 +128,13 @@
         </div>
         <!-- 标记无效资源：改 analysis 记录 enabled=false（不删数据） -->
         <button id="asst-disable" class="btn btn-outline btn-block" style="margin-top:6px" data-i18n="asstMarkInvalid">标记为无效资源</button>
-        <!-- Submit 成功后显示：给 published 记录补一条备注（comment 字段） -->
-        <div class="input-row" id="asst-note-row" hidden style="margin-top:6px">
-          <input type="text" id="asst-note" spellcheck="false" />
-          <button id="asst-note-save" class="btn btn-sm" data-i18n="asstNoteSave">备注</button>
+        <!-- 发布后备注：默认显示，保存到 published 记录的 comment 字段（须 Submit 成功后才能保存） -->
+        <div class="form-row" id="asst-note-row" style="margin-top:6px">
+          <label class="field-label" data-i18n="asstNoteLabel">发布后备注（保存到已发布记录）</label>
+          <div class="input-row">
+            <input type="text" id="asst-note" spellcheck="false" />
+            <button id="asst-note-save" class="btn btn-primary btn-sm" data-i18n="asstNoteSave">保存</button>
+          </div>
         </div>
       </div>
     </section>
