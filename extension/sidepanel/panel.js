@@ -283,24 +283,39 @@ function renderAssistant() {
     b.disabled = !activeTabUrl || needComment || asstStepBusy === step;
   });
 
-  // 字段区：摘要（标题/摘要/文章语言）+ 评论字段（评论/译文/昵称/邮箱），各带复制按钮；
-  // 仅绑定会话时展示（切到别的标签页后旧数据不误导）
+  // 字段区：摘要（标题/摘要+文章语言）+ 评论字段（评论/译文/昵称+邮箱），各带复制按钮；
+  // 仅绑定会话时展示（切到别的标签页后旧数据不误导）。
+  // 文章语言跟在「摘要」标签行右侧、昵称/邮箱并排一行，都是为了省高度
   const m = bound ? (pub.manual || {}) : {};
-  const rows = [
-    ['fieldTitle', m.sumTitle], ['fieldSummary', m.summary], ['fieldLang', m.artLang],
-    ['fieldComment', m.comment], ['fieldTranslation', m.translation],
-    ['fieldName', m.name], ['fieldEmail', m.email],
-  ].filter(([, v]) => v);
-  const box = $('#asst-fields');
-  box.innerHTML = rows.map(([key, val], i) => `
+  const copies = [];
+  const fieldHtml = (key, val, side = '') => {
+    const i = copies.push(val) - 1;
+    return `
     <div class="asst-field">
-      <div class="asst-field-label"><span>${t(key)}</span><button class="asst-copy" data-idx="${i}">${t('copy')}</button></div>
+      <div class="asst-field-label"><span>${t(key)}</span>${side}<button class="asst-copy" data-idx="${i}">${t('copy')}</button></div>
       <div class="asst-field-val">${esc(val)}</div>
-    </div>`).join('');
+    </div>`;
+  };
+  const parts = [];
+  if (m.sumTitle) parts.push(fieldHtml('fieldTitle', m.sumTitle));
+  if (m.summary) {
+    const lang = m.artLang ? `<span class="asst-field-side">${t('fieldLang')}: ${esc(m.artLang)}</span>` : '';
+    parts.push(fieldHtml('fieldSummary', m.summary, lang));
+  } else if (m.artLang) {
+    parts.push(fieldHtml('fieldLang', m.artLang));
+  }
+  if (m.comment) parts.push(fieldHtml('fieldComment', m.comment));
+  if (m.translation) parts.push(fieldHtml('fieldTranslation', m.translation));
+  const nameEmail = [['fieldName', m.name], ['fieldEmail', m.email]].filter(([, v]) => v);
+  if (nameEmail.length) {
+    parts.push(`<div class="asst-field-pair">${nameEmail.map(([k, v]) => fieldHtml(k, v)).join('')}</div>`);
+  }
+  const box = $('#asst-fields');
+  box.innerHTML = parts.join('');
   box.querySelectorAll('.asst-copy').forEach((btn) => {
     btn.addEventListener('click', async () => {
       try {
-        await navigator.clipboard.writeText(rows[Number(btn.dataset.idx)][1]);
+        await navigator.clipboard.writeText(copies[Number(btn.dataset.idx)]);
         const old = btn.textContent;
         btn.textContent = t('copied');
         setTimeout(() => { btn.textContent = old; }, 1200);

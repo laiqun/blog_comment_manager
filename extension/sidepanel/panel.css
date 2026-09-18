@@ -349,6 +349,11 @@ input::placeholder { color: var(--text-faint); }
   font-size: 11px;
   margin-bottom: 2px;
 }
+/* 跟在字段标签右侧的辅助信息（如摘要行的文章语言），复制按钮仍顶格在最右 */
+.asst-field-side { color: var(--text-faint); margin-left: 6px; margin-right: auto; }
+/* 昵称/邮箱并排一行（省高度） */
+.asst-field-pair { display: flex; gap: 8px; margin-bottom: 8px; }
+.asst-field-pair .asst-field { flex: 1; min-width: 0; margin-bottom: 0; }
 .asst-copy {
   padding: 1px 8px;
   border: 1px solid var(--blue-bright);

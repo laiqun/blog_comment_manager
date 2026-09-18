@@ -139,6 +139,7 @@ export const MESSAGES = {
   asstFilling: { zh: '正在自动填写表单…', en: 'Filling the comment form…' },
   asstSumDone: { zh: '标题与摘要已生成，显示在下方，可复制。', en: 'Title & summary generated below — copyable.' },
   asstFormDone: { zh: '表单识别完成，已在页面上蓝色高亮目标表单。', en: 'Form detected and highlighted on the page.' },
+  asstNoFormShort: { zh: '未找到评论表单', en: 'No comment form found' },
   asstCommentDone: { zh: '评论已生成。不满意可再点「AI 生成评论」换一条，满意后点「自动填写表单」。', en: 'Comment generated. Click "AI generate comment" again for a new one, or "Auto fill form" to continue.' },
   asstReady: { zh: '评论表单已自动填好。请检查内容后点击 Submit 提交，或点击 Skip 跳过换下一个资源。', en: 'The comment form has been filled. Please review the content and click Submit to post, or Skip to move to the next resource.' },
   asstManual: { zh: '操作对象是当前激活的标签页。「获取标题与摘要」「AI 生成评论」「AI 识别评论表单」互不依赖，可任意顺序执行；评论不满意可再点一次重新生成，满意后点「自动填写表单」。', en: 'Steps act on the active tab. "Get title & summary", "AI generate comment" and "AI detect form" are independent — run them in any order. Not happy with the comment? Click again for a new one, then "Auto fill form".' },

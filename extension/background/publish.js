@@ -252,7 +252,7 @@ export class PublishAssistant {
         rt.manual = { ...m, title: (d && d.title) || m.title, excerpt: (d && d.excerpt) || m.excerpt, form, frameId };
         // 滚动到识别出的表单并高亮（在表单所在框架执行），让人工确认 AI 的识别结果
         if (form) await this.frameCall(tab.id, frameId, 'markForm', form);
-        rt.uiStatus = { key: 'asstFormDone' };
+        rt.uiStatus = { key: form ? 'asstFormDone' : 'asstNoFormShort' };
       } else if (step === 'genComment') {
         // 不依赖表单识别结果：识别失败也照常生成评论，展示在助手页上供手动复制
         await begin('asstGenerating');
