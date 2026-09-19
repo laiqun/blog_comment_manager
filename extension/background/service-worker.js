@@ -97,6 +97,8 @@ async function snapshot() {
     // 插件最近一次主动导航的「目标 URL → 同行域名」（资源库立即发布/换一个）：
     // 绑定会话建立前面板也能据此把同行域名预填进「定位同行网站」输入框
     pendingRef: (publish && publish.pendingRef) || { url: '', domain: '' },
+    // 上次 Submit 成功的发布（助手页「备注」的标记对象，与当前标签页解耦）
+    lastPublish: st.lastPublish ? { ...st.lastPublish } : null,
     resources,
     logs: st.logs.slice(-200).reverse(),
     settings: {
@@ -401,7 +403,7 @@ async function handleMessage(msg, sender) {
     }
 
     case 'pub:note': {
-      // 助手页「备注」：给 published 表中该页面的已发布记录写入 comment 字段
+      // 助手页「备注」：给上一次 Submit 成功的发布（lastPublish）打标记，不要求当前标签页绑定
       return await publish.saveNote(msg.comment);
     }
 

@@ -6,8 +6,10 @@
  *   步骤：获取标题与摘要 / AI 识别表单 / AI 生成评论 互不依赖、可任意顺序、可反复触发
  *   （同一步骤的并发触发由 stepBusy 去重）；「自动填写表单」需评论已生成，
  *   填表成功后进入 awaiting_review 等人工 Submit / Skip（此阶段步骤仍可重跑并覆盖重填）。
- *   Submit 成功写 published 表（按 [url, targetUrl] 防重复），随后面板可给该记录补备注
- *   （saveNote 写 comment 字段）；Skip 仅清理页面标记；「标记为无效资源」停用 analysis 记录。
+ *   Submit 成功写 published 表（按 [url, targetUrl] 防重复），并把这次发布记进
+ *   chrome.storage.local 的 lastPublish（url/目标地址/任务名/时间）；助手页底部「备注」
+ *   随时给上次发布打标记（如「有审核」「失败」），不要求当前标签页还停在该资源页；
+ *   Skip 仅清理页面标记；「标记为无效资源」停用 analysis 记录。
  *   「换一个」：把当前激活标签页导航到资源库中未发布过的下一条资源（ready 优先于 captcha）。
  *   助手页所需数据（状态文案/摘要/评论/译文/昵称/邮箱）全部落在 publishRuntime
  *   （rt.uiStatus / rt.manual），经快照广播给面板渲染；页面脚本只做无 UI 操作。
@@ -376,6 +378,14 @@ export class PublishAssistant {
         if (s && s.ok) {
           submitted = true;
           await this.markPublished(rt.resourceUrl, cfg.targetUrl, cfg.name);
+          // 记下「上次发布」：助手页备注按钮的标记对象（与当前标签页解耦，之后随时可改备注）
+          getState().lastPublish = {
+            url: rt.resourceUrl,
+            targetUrl: cfg.targetUrl,
+            taskName: cfg.name,
+            publishedAt: fmtDateTime(),
+            note: '',
+          };
           addLog('publish', '✓ 人工确认，已提交', 'success', rt.resourceUrl);
           rt.uiStatus = { key: 'asstSubmitted' };
           // 已提交成功的评论作废：强制重新生成，避免页面刷新后误重复提交同一条
@@ -405,7 +415,7 @@ export class PublishAssistant {
 
     // 停在当前页面，退回步骤阶段：可继续操作本页，或点「换一个」去下一条未发布资源
     rt.stage = 'awaiting_steps';
-    await this.notify(['publishRuntime', 'logs']);
+    await this.notify(['publishRuntime', 'lastPublish', 'logs']);
     return { ok: true, submitted };
   }
 
@@ -433,27 +443,25 @@ export class PublishAssistant {
     }
   }
 
-  /** 助手页「备注」：给 published 表中该页面的已发布记录写入 comment 字段（Submit 成功后可用） */
-  async saveNote(comment) {
-    const tab = await this.activeTab();
-    const rt = getState().publishRuntime;
-    if (!tab || !rt || rt.resourceUrl !== tab.url) {
-      return { ok: false, error: '请在绑定的资源页面上操作（当前标签页与会话不一致）' };
-    }
-    const cfg = this.taskConfig();
+  /**
+   * 助手页「备注」：给上一次 Submit 成功的发布打标记（如「有审核」「失败」）。
+   * 标记存在 chrome.storage.local 的 lastPublish 里（随快照下发展示），与当前标签页解耦——
+   * 提交后跳到别的页面、甚至重开浏览器都能改；同时按记下的 [url, targetUrl] 尽力同步
+   * published 表的 comment 字段（记录缺失或写失败不影响备注本身）。
+   */
+  async saveNote(note) {
+    const lp = getState().lastPublish;
+    if (!lp || !lp.url) return { ok: false, error: '还没有 Submit 成功的发布记录，无可备注的对象' };
+    const text = String(note || '').trim();
+    if (!text) return { ok: false, error: '备注内容为空' };
+    getState().lastPublish = { ...lp, note: text };
     try {
-      const row = await idbGet('published', [rt.resourceUrl, cfg.targetUrl]);
-      if (!row) return { ok: false, error: '该页面还没有已发布记录，请先 Submit 成功后再保存备注' };
-      const text = String(comment || '').trim();
-      if (!text) return { ok: false, error: '备注内容为空' };
-      await idbPut('published', { ...row, comment: text });
-      addLog('publish', '已发布记录备注已保存', 'info', rt.resourceUrl);
-      await this.notify(['logs']);
-      return { ok: true };
-    } catch (e) {
-      addLog('publish', `备注保存失败：${e.message}`, 'error', rt.resourceUrl);
-      return { ok: false, error: e.message };
-    }
+      const row = await idbGet('published', [lp.url, lp.targetUrl]);
+      if (row) await idbPut('published', { ...row, comment: text });
+    } catch { /* published 表同步失败不影响备注保存 */ }
+    addLog('publish', `上次发布备注已保存：${text}`, 'info', lp.url);
+    await this.notify(['lastPublish', 'logs']);
+    return { ok: true };
   }
 
   /**

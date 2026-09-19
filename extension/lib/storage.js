@@ -34,6 +34,7 @@ const state = {
   collectState: EMPTY_COLLECT(),
   assistantTask: EMPTY_ASSISTANT_TASK(),
   publishRuntime: null,  // 助手会话状态 {resourceUrl, tabId, stage, refDomain, uiStatus, manual}
+  lastPublish: null,     // 上次 Submit 成功的发布 {url, targetUrl, taskName, publishedAt, note}（备注标记的对象）
   logs: [],              // {t, src, msg, level, url}
   loaded: false,
 };
@@ -52,6 +53,7 @@ export async function load() {
       collectState: { ...EMPTY_COLLECT(), ...(saved.collectState || {}) },
       assistantTask: { ...EMPTY_ASSISTANT_TASK(), ...(saved.assistantTask || {}) },
       publishRuntime: saved.publishRuntime || null,
+      lastPublish: saved.lastPublish || null,
       logs: saved.logs || [],
     });
   }
@@ -93,7 +95,7 @@ async function migrateBacklinksToIdb(saved) {
 }
 
 export async function save(...keys) {
-  const all = ['settings', 'collectState', 'assistantTask', 'publishRuntime', 'logs'];
+  const all = ['settings', 'collectState', 'assistantTask', 'publishRuntime', 'lastPublish', 'logs'];
   // 兼容 save(['a','b']) 数组传参：展平后再筛合法 key（多元素数组会被对象键 coercion 成 "a,b" 垃圾键）
   const flat = keys.flat().filter((k) => all.includes(k));
   const list = flat.length ? flat : all;
@@ -117,6 +119,7 @@ export async function clearAll() {
   state.collectState = EMPTY_COLLECT();
   state.assistantTask = EMPTY_ASSISTANT_TASK();
   state.publishRuntime = null;
+  state.lastPublish = null;
   state.logs = [];
   for (const s of ['backlinks', 'analysis', 'published', 'templates']) idbClear(s).catch(() => {});
 }

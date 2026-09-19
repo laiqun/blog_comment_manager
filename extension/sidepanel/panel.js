@@ -221,7 +221,7 @@ let asstWatchdog = 0;       // 步骤按钮看门狗计时器
 let asstTemplates = [];     // 模板缓存（IndexedDB templates 表）
 let asstTaskCollapsed = true;  // 「当前任务」详情折叠状态（默认收起，模板选择行不受影响）
 let asstTaskTouched = false;   // 用户手动折叠过则不再自动展开
-let asstNoteUrl = '';          // 已填过默认备注文案的资源 url：切换绑定资源时把备注输入框重置回默认值
+let asstNoteKey = '';          // 已同步进备注输入框的「上次发布」标识（url+时间）：换了新发布记录时把输入框重置为该记录的备注/默认值
 let asstLocateUrl = '';        // 已回填过同行域名的资源 url：切换绑定资源时把域名输入框重置为会话 refDomain
 
 function activateTab(name) {
@@ -353,11 +353,16 @@ function renderAssistant() {
   $('#asst-skip').disabled = !review;
   // 「标记为无效资源」：绑定会话即可用（不需要 awaiting_review）
   $('#asst-disable').disabled = !bound;
-  // 「备注」输入行默认显示；切换绑定资源时重置一次默认文案（同一资源会话内保留用户输入）
-  if (bound && pub.resourceUrl !== asstNoteUrl) {
-    asstNoteUrl = pub.resourceUrl;
-    $('#asst-note').value = t('asstNoteDefault');
+  // 「备注」输入行：标记上一次 Submit 成功的发布（lastPublish），与当前标签页是否绑定无关；
+  // 换了一条发布记录时把输入框重置为该记录已存的备注（无则给默认文案），同一条内保留用户输入
+  const lp = snap.lastPublish || null;
+  const lpKey = lp ? `${lp.url}|${lp.publishedAt || ''}` : '';
+  if (lpKey !== asstNoteKey) {
+    asstNoteKey = lpKey;
+    $('#asst-note').value = lp ? (lp.note || t('asstNoteDefault')) : '';
+    $('#asst-note').title = lp ? `${lp.url}\n${lp.publishedAt || ''}` : '';
   }
+  $('#asst-note-save').disabled = !lp;
   // 填表完成进入待确认时自动切到助手 Tab（后台无法主动弹面板，缓解「看不到确认界面」）
   if (review && !asstLastReview) {
     const cur = document.querySelector('.tab.active');
@@ -420,10 +425,7 @@ async function decide(decision) {
     const res = await send({ type: 'pub:decision', decision });
     // 后台返回的具体原因优先展示（守卫拒绝会带 error），无原因才退回笼统提示
     if (res && res.ok === false) toast(res.error || t('asstStepNoResp'), 'error');
-    // Submit 成功：published 记录已生成，备注输入框为空则补一次默认文案（行本身默认显示，无需再切换）
-    if (res && res.ok && res.submitted && !$('#asst-note').value) {
-      $('#asst-note').value = t('asstNoteDefault');
-    }
+    // Submit 成功后备注输入框由快照里的新 lastPublish 驱动重置（renderAssistant 处理）
   } catch (e) {
     toast(e.message, 'error');
   }
@@ -442,7 +444,7 @@ async function markInvalid() {
   btn.disabled = false;
 }
 
-/** 「备注」：把输入内容写入 published 表中该页面对应记录的 comment 字段 */
+/** 「备注」：给上一次 Submit 成功的发布打标记（后台写 lastPublish，并尽力同步 published 表 comment） */
 async function saveNote() {
   try {
     const res = await send({ type: 'pub:note', comment: $('#asst-note').value });
