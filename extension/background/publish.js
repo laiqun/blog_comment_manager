@@ -17,7 +17,7 @@
 import { getState, addLog } from '../lib/storage.js';
 import { PUBLISH_SELECTORS } from '../lib/config.js';
 import { idbGet, idbPut, idbPutAll, idbGetAll } from '../lib/idb.js';
-import { fmtDateTime } from '../lib/util.js';
+import { fmtDateTime, samePageUrl } from '../lib/util.js';
 import { detectForm, generateComment, generateIdentity, summarizeArticle, translateComment } from '../lib/openrouter.js';
 
 /** AI 表单识别失败时的兜底选择器（WordPress 默认评论表单） */
@@ -45,6 +45,9 @@ export class PublishAssistant {
     this.notify = notify;
     // 正在执行中的助手页步骤：按钮不置灰可重复点击，靠这里忽略同一步骤的并发触发
     this.stepBusy = new Set();
+    // 插件主动导航时记下的「目标 URL → 同行域名」（立即发布/换一个）：bind 时优先用，
+    // 页面跳转后 URL 变了也能对上来源；SW 回收会丢，此时靠 bind 里按 URL 查 analysis 兜底
+    this.pendingRef = { url: '', domain: '' };
   }
 
   /** 当前激活标签页（助手页的默认操作对象）；非 http(s) 页面不可操作，返回 null */
@@ -68,7 +71,8 @@ export class PublishAssistant {
   /**
    * 绑定激活标签页：publishRuntime 已指向该页面则复用；否则新建会话——
    * 全框架注入 publisher（评论框可能在 iframe 里）+ 纯规则页面检测（验证码/登录/表单），
-   * 并查 analysis 表得到 refDomain（「定位目标链接」参考的收集目标域名）。
+   * 并确定 refDomain（「定位同行网站」参考的收集目标域名）：优先用插件导航时记下的
+   * 同行域名（pendingRef，立即发布/换一个时已知来源），兜底按 URL 查 analysis 表。
    */
   async bind(tab) {
     const st = getState();
@@ -90,9 +94,13 @@ export class PublishAssistant {
     };
     try {
       const rows = await idbGetAll('analysis');
-      const hit = rows.find((r) => r && r.url === tab.url);
+      const hit = rows.find((r) => r && samePageUrl(r.url, tab.url));
       if (hit) rt.refDomain = hit.targetDomain || '';
-    } catch { /* 查不到则面板「定位目标链接」会提示 */ }
+    } catch { /* 查不到则面板「定位同行网站」会提示 */ }
+    // 插件导航时已知的同行域名优先：跳转后 URL 变了、analysis 查不到也能对上来源
+    if (this.pendingRef.url && this.pendingRef.domain && samePageUrl(this.pendingRef.url, tab.url)) {
+      rt.refDomain = this.pendingRef.domain;
+    }
     await this.injectAll(tab.id).catch(() => {});
     const d = await this.detectAll(tab.id).catch(() => null);
     if (st.publishRuntime !== rt) return rt; // 检测期间用户切到了别的页面
@@ -324,16 +332,18 @@ export class PublishAssistant {
   }
 
   /**
-   * 助手页「定位目标链接」：在当前标签页主框架循环标记指向收集目标域名的锚点。
+   * 助手页「定位同行网站」：在当前标签页主框架循环标记指向收集目标域名的锚点。
    * 结果（{ ok, index, total } 或 { ok:false, reason }）随消息响应返回给面板展示。
    */
-  async onLocate() {
+  async onLocate(domain) {
     const tab = await this.activeTab();
     if (!tab) return { ok: false, reason: 'noPage' };
     const rt = await this.bind(tab);
-    if (!rt.refDomain) return { ok: false, reason: 'noTarget' };
+    // 域名优先取面板输入框的值（用户可手改），空则回落绑定会话的 refDomain
+    const target = (domain || '').trim() || rt.refDomain;
+    if (!target) return { ok: false, reason: 'noTarget' };
     try {
-      const res = await this.frameCall(tab.id, 0, 'locateLink', { domain: rt.refDomain });
+      const res = await this.frameCall(tab.id, 0, 'locateLink', { domain: target });
       return res || { ok: false, reason: 'noLink' };
     } catch {
       return { ok: false, reason: 'noLink' }; // 页面可能已跳转/关闭
@@ -451,6 +461,17 @@ export class PublishAssistant {
    * 口径与资源库一致：analysis 表命中结论（ready/captcha）且启用，published 表无记录；
    * ready 优先于 captcha，同档按命中时间新→旧。
    */
+  /** 资源库「立即发布」：当前激活标签页导航到指定资源，并记下该资源来自的同行域名（供 bind 使用） */
+  async navigateTo(url, refDomain) {
+    const tab = await this.activeTab();
+    if (!tab) return { ok: false, error: '当前标签页不可导航' };
+    this.pendingRef = { url, domain: refDomain || '' };
+    await chrome.tabs.update(tab.id, { url });
+    addLog('publish', '立即发布：已在当前标签页打开资源', 'info', url);
+    await this.notify(['logs']);
+    return { ok: true, url };
+  }
+
   async pickNext() {
     const tab = await this.activeTab();
     if (!tab) return { ok: false, error: '当前标签页不可导航' };
@@ -467,6 +488,7 @@ export class PublishAssistant {
       .sort((a, b) => ((a.status === 'ready' ? 0 : 1) - (b.status === 'ready' ? 0 : 1)) || ((b.checkedAt || 0) - (a.checkedAt || 0)));
     if (!candidates.length) return { ok: false, error: '资源库中没有未发布过的资源了' };
     const url = candidates[0].url;
+    this.pendingRef = { url, domain: candidates[0].targetDomain || '' };
     await chrome.tabs.update(tab.id, { url });
     addLog('publish', '换一个：已在当前标签页打开下一条未发布资源', 'info', url);
     await this.notify(['logs']);

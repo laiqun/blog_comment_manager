@@ -94,6 +94,9 @@ async function snapshot() {
           })(),
         }
       : null,
+    // 插件最近一次主动导航的「目标 URL → 同行域名」（资源库立即发布/换一个）：
+    // 绑定会话建立前面板也能据此把同行域名预填进「定位同行网站」输入框
+    pendingRef: (publish && publish.pendingRef) || { url: '', domain: '' },
     resources,
     logs: st.logs.slice(-200).reverse(),
     settings: {
@@ -408,8 +411,13 @@ async function handleMessage(msg, sender) {
     }
 
     case 'pub:locate': {
-      // 助手页「定位目标链接」：结果（第 n/m 个或失败原因）随响应返回给面板展示
-      return await publish.onLocate();
+      // 助手页「定位同行网站」：结果（第 n/m 个或失败原因）随响应返回给面板展示
+      return await publish.onLocate(msg.domain);
+    }
+
+    case 'pub:navigate': {
+      // 资源库「立即发布」：当前激活标签页导航到该资源（同行域名随消息带上，bind 时优先使用）
+      return await publish.navigateTo(msg.url, msg.refDomain);
     }
 
     case 'pickNextResource': {

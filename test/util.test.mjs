@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  truncate, hostMatches, extractUrlsDeep, extractCommenterSites,
+  truncate, hostMatches, samePageUrl, extractUrlsDeep, extractCommenterSites,
   toCSV, fmtTime, fmtDate,
 } from '../extension/lib/util.js';
 
@@ -18,6 +18,14 @@ test('hostMatches 支持子域并忽略 www', () => {
   assert.equal(hostMatches('sprunki-game.io.evil.com', 'sprunki-game.io'), false);
   assert.equal(hostMatches('notrelated.com', 'sprunki-game.io'), false);
   assert.equal(hostMatches('', 'x.com'), false);
+});
+
+test('samePageUrl 容忍协议/www/末尾斜杠/hash 差异', () => {
+  assert.equal(samePageUrl('https://blog.com/post/', 'http://www.blog.com/post#c1'), true);
+  assert.equal(samePageUrl('https://blog.com/', 'https://blog.com'), true);
+  assert.equal(samePageUrl('https://blog.com/a', 'https://blog.com/b'), false);
+  assert.equal(samePageUrl('HTTPS://Blog.com/A?x=1', 'https://blog.com/a?x=1'), true);
+  assert.equal(samePageUrl('', 'https://blog.com'), false);
 });
 
 test('extractUrlsDeep 递归抽取并排除指定主机', () => {

@@ -1,13 +1,13 @@
 /**
  * 侧边栏：四 Tab（收集/助手/日志/资源库）+ 页脚。
  * 「助手」Tab 是发布主操作台：顶部「当前任务」配置（可从模板选择/存为模板/删除模板），
- * 步骤按钮、字段展示与复制、定位目标链接、Submit/Skip、「换一个」——全部作用于浏览器
+ * 步骤按钮、字段展示与复制、定位同行网站、Submit/Skip、「换一个」——全部作用于浏览器
  * 当前激活的标签页；AI 步骤的运行结果来自 snapshot.publish（后台 publishRuntime 的投影），
  * 面板按 publish.resourceUrl 与当前激活标签页 URL 是否一致决定字段区与 Submit/Skip 是否生效。
  * 与 background 通过 sendMessage(RPC) + stateChanged 广播推送交互。
  */
 import { setLanguage, t, applyI18n } from '../lib/i18n.js';
-import { toCSV, fmtTime } from '../lib/util.js';
+import { toCSV, fmtTime, samePageUrl } from '../lib/util.js';
 
 let snap = null;
 
@@ -222,6 +222,7 @@ let asstTemplates = [];     // 模板缓存（IndexedDB templates 表）
 let asstTaskCollapsed = true;  // 「当前任务」详情折叠状态（默认收起，模板选择行不受影响）
 let asstTaskTouched = false;   // 用户手动折叠过则不再自动展开
 let asstNoteUrl = '';          // 已填过默认备注文案的资源 url：切换绑定资源时把备注输入框重置回默认值
+let asstLocateUrl = '';        // 已回填过同行域名的资源 url：切换绑定资源时把域名输入框重置为会话 refDomain
 
 function activateTab(name) {
   document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
@@ -272,10 +273,17 @@ function renderAssistant() {
   // 当前资源 = 当前激活标签页
   $('#asst-url').textContent = activeTabUrl || t('asstNoPage');
   $('#asst-url').title = activeTabUrl;
-  // 「定位目标链接」按钮上标注资源来自哪个同行站点（绑定会话的 refDomain）
-  const from = bound ? (pub.refDomain || '') : '';
-  $('#asst-locate').textContent = from ? t('asstLocateFrom', { domain: from }) : t('asstLocate');
-  $('#asst-locate').title = from;
+  // 「定位同行网站」右侧输入框：绑定资源切换时回填会话 refDomain（用户可在框内改域名再定位）
+  if (bound && pub.resourceUrl !== asstLocateUrl) {
+    asstLocateUrl = pub.resourceUrl;
+    $('#asst-locate-domain').value = pub.refDomain || '';
+  }
+  // 未绑定（刚点立即发布/换一个，还没跑任何步骤）也预填：导航时后台已记下该资源来自哪个同行
+  const pr = snap.pendingRef || {};
+  if (!bound && pr.url && activeTabUrl && samePageUrl(pr.url, activeTabUrl) && pr.url !== asstLocateUrl) {
+    asstLocateUrl = pr.url;
+    $('#asst-locate-domain').value = pr.domain || '';
+  }
 
   // 状态行：优先绑定会话的 uiStatus（key 走 i18n，text 直显），无则给默认引导
   let status = '';
@@ -336,7 +344,7 @@ function renderAssistant() {
     });
   });
 
-  // 定位目标链接 / 换一个：激活标签页是可注入网页即可用
+  // 定位同行网站 / 换一个：激活标签页是可注入网页即可用
   $('#asst-locate').disabled = !activeTabUrl;
   $('#asst-next').disabled = !activeTabUrl;
   // Submit / Skip：仅绑定会话且 awaiting_review（表单已填好待确认）解锁
@@ -386,14 +394,14 @@ async function runStep(step) {
   if (failed) $('#asst-status').textContent = t('asstStepNoResp');
 }
 
-/** 「定位目标链接」：结果（第 n/m 个 / 未找到）显示在状态行 */
+/** 「定位同行网站」：结果（第 n/m 个 / 未找到）显示在状态行；域名取右侧输入框（可手改，空则后台回落会话 refDomain） */
 async function runLocate() {
   const btn = $('#asst-locate');
   btn.disabled = true;
   const old = btn.textContent;
   btn.textContent = t('asstLocating');
   try {
-    const res = await send({ type: 'pub:locate' });
+    const res = await send({ type: 'pub:locate', domain: $('#asst-locate-domain').value.trim() });
     const status = $('#asst-status');
     if (res && res.ok && res.index != null) status.textContent = t('asstLocated', { n: res.index, m: res.total });
     else if (res && res.reason === 'noTarget') status.textContent = t('asstNoTarget');
@@ -520,7 +528,7 @@ function bindEvents() {
     }
   });
 
-  // 助手页：步骤按钮 / 定位目标链接 / 换一个 / Submit / Skip
+  // 助手页：步骤按钮 / 定位同行网站 / 换一个 / Submit / Skip
   document.querySelectorAll('.asst-step').forEach((b) => {
     b.addEventListener('click', () => runStep(b.dataset.step));
   });
@@ -647,12 +655,11 @@ function bindEvents() {
     const res = (libraryRows || []).find((r) => r.url === url);
     if (!res) return;
     if (btn.dataset.ract === 'open') chrome.tabs.create({ url: res.url });
-    // 立即发布：把当前激活标签页导航到该资源 URL，随后到助手页执行各步骤
+    // 立即发布：把当前激活标签页导航到该资源 URL（同行域名随消息带给后台），随后到助手页执行各步骤
     if (btn.dataset.ract === 'publish') {
       try {
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab) return toast(t('asstNoPage'), 'error');
-        await chrome.tabs.update(tab.id, { url: res.url });
+        const nav = await send({ type: 'pub:navigate', url: res.url, refDomain: res.targetDomain || '' });
+        if (nav && nav.ok === false) return toast(nav.error || t('asstNoPage'), 'error');
         activateTab('assistant');
       } catch (err) {
         toast(err.message, 'error');

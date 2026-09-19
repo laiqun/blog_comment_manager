@@ -140,3 +140,11 @@ export function hostMatches(host, domain) {
   domain = domain.toLowerCase().replace(/^www\./, '');
   return host === domain || host.endsWith('.' + domain);
 }
+
+/** 两个 URL 是否同一页面：忽略大小写、协议、host 前导 www.、hash 与末尾斜杠（按 URL 查来源时容忍跳转差异） */
+export function samePageUrl(a, b) {
+  const norm = (u) => String(u || '').toLowerCase().split('#')[0]
+    .replace(/\/+$/, '').replace(/^https?:\/\/(www\.)?/, '');
+  const x = norm(a);
+  return !!x && x === norm(b);
+}
